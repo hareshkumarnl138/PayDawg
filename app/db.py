@@ -28,6 +28,14 @@ def init_db():
     if settings.database_path != ":memory:":
         Path(settings.database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
     with db_session() as db:
+        # Preserve any database from the earlier starter schema instead of silently discarding it.
+        existing = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='payments'").fetchone()
+        if existing:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(payments)").fetchall()}
+            if "request_hash" not in columns or "customer_id" not in columns:
+                from datetime import datetime, timezone
+                suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                db.execute("ALTER TABLE payments RENAME TO payments_legacy_" + suffix)
         db.executescript("""
         CREATE TABLE IF NOT EXISTS merchants (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
