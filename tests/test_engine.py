@@ -21,5 +21,5 @@ async def test_no_flags_maps_to_wag(monkeypatch):
     monkeypatch.setattr(engine, 'analyze', no_llm)
     from datetime import datetime, timezone
     p = {'id':'p1','merchant_id':'demo-merchant','amount':10,'currency':'USD','customer_id':'known','description':'test','created_at':datetime.now(timezone.utc).isoformat()}
-    result = await decide(p, {'payment_count':10,'average_amount':10,'max_amount':20}, [])
+    result = await decide(p, {'payment_count':0,'average_amount':0,'max_amount':0,'active_hours':list(range(24))}, [])
     assert result['verdict'] == 'Wag'
