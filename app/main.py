@@ -121,7 +121,12 @@ async def approve_payment(payment_id: str):
             raise HTTPException(409, f"Payment cannot be approved from status {payment['status']}.")
         if payment["status"] == "approved":
             return payment_dict(row)
+        if settings.rail_provider == "paypal" and payment["status"] == "screened":
+            raise HTTPException(409, "Buyer must follow the PayPal approval_url first.")
         capture_authorization = payment["verdict"] == "Growl" and payment["status"] in {"held", "approved"}
+    if capture_authorization and payment["status"] == "held":
+        with db_session() as db:
+            update_status(db, payment_id, "approved", "payment.merchant_approved", {"rail": settings.rail_provider})
     try:
         rail = get_rail()
         if payment["verdict"] == "Growl" and not capture_authorization:
