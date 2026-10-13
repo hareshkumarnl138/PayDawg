@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.db.models import Payment
+from app.db.models import Payment, PaymentEvent
 from app.payments.paypal_adapter import PayPalAdapter
 from app.services.audit import append_event
 
@@ -39,6 +39,11 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db), paypal
     next_status = status_map.get(event_type)
     if next_status:
         previous = payment.status
+        # Provider events can be delivered more than once; ignore a previously recorded event ID.
+        if event.get("id"):
+            seen = db.scalar(select(PaymentEvent.id).where(PaymentEvent.payment_id == payment.id, PaymentEvent.event_type == "paypal.webhook", PaymentEvent.payload_json.contains(event.get("id"))).limit(1))
+            if seen:
+                return {"received": True, "matched": True, "duplicate_event": True}
         payment.status = next_status
         payment.updated_at = datetime.now(timezone.utc)
         if next_status == "captured":
