@@ -1,29 +1,11 @@
-# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Virtual environments
+*.sqlite3
+*.db
 .venv/
 venv/
-env/
-
-# Secrets and local state
 .env
-.env.*
-!.env.example
-*.db
-*.sqlite
-*.sqlite3
-
-# Editors / OS
-.vscode/
-.idea/
+.pytest_cache/
+.coverage
+htmlcov/
 .DS_Store
-Thumbs.db
