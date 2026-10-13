@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.ai.baseline import get_baseline, update_baseline
+from app.ai.baseline import get_baseline
 from app.ai.decision_engine import decide_verdict
 from app.ai.llm_analyzer import analyze_payment
 from app.ai.risk_rules import evaluate_rules
-from app.ai.schemas import PaymentRequest, PaymentResponse, RiskAnalysis, EventResponse
+from app.ai.schemas import PaymentRequest, PaymentResponse, EventResponse
 from app.config import get_settings
 from app.db.database import get_db
 from app.db.models import Payment
@@ -98,9 +98,8 @@ async def create_payment(payload: PaymentRequest, request: Request, db: Session 
             db.refresh(payment)
             result = _response(payment)
             # add approval link as an API-level convenience without persisting untrusted URL in the payment model
-            result_payload = result.model_dump(mode="json")
-            result_payload["approval_url"] = approval
-            return result_payload  # FastAPI includes additional response data only when schema permits; see response model extra behavior.
+            result.approval_url = approval
+            return result
         except (PayPalAPIError, PayPalConfigurationError) as exc:
             payment.status = "rail_error"
             payment.updated_at = datetime.now(timezone.utc)
