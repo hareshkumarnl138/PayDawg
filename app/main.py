@@ -72,10 +72,10 @@ async def create_payment(body: PaymentCreate, idempotency_key: str | None = Head
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (pid, body.merchant_id, key, request_hash, body.amount, body.currency.upper(), body.customer_id,
              body.description, decision["verdict"], decision["risk_level"], json.dumps(decision["reasons"]),
-             json.dumps(decision["flags"]), decision["decision_source"], status, settings.rail_provider, created_at, created_at))
+             json.dumps(decision["flags"]), decision["decision_source"], "created", settings.rail_provider, created_at, created_at))
         add_event(db, pid, "payment.created", None, "created", {"amount": body.amount, "currency": body.currency.upper()})
-        add_event(db, pid, "payment.screened", "created", status,
-                  {"verdict": decision["verdict"], "reasons": decision["reasons"], "decision_source": decision["decision_source"]})
+        update_status(db, pid, status, "payment.screened",
+                      {"verdict": decision["verdict"], "reasons": decision["reasons"], "decision_source": decision["decision_source"]})
         if status == "blocked":
             return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
         record_notebook_payment(db, body.merchant_id, body.amount)
