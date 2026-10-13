@@ -46,7 +46,7 @@ def init_db():
             currency TEXT NOT NULL, customer_id TEXT NOT NULL, description TEXT NOT NULL,
             verdict TEXT NOT NULL, risk_level TEXT NOT NULL, reasons_json TEXT NOT NULL,
             flags_json TEXT NOT NULL, decision_source TEXT NOT NULL, status TEXT NOT NULL,
-            rail TEXT NOT NULL, provider_order_id TEXT, provider_capture_id TEXT,
+            rail TEXT NOT NULL, provider_order_id TEXT, provider_authorization_id TEXT, provider_capture_id TEXT,
             approval_url TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(merchant_id, idempotency_key)
         );
