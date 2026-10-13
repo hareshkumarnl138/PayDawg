@@ -59,7 +59,7 @@ async def create_payment(payload: PaymentRequest, request: Request, db: Session 
 
     payment_id = f"pay_{uuid.uuid4().hex[:24]}"
     # Screening does not prove that money moved. External payment actions are separate states.
-    initial_status = "blocked" if decision.verdict == "bark" else "awaiting_buyer" if decision.verdict == "wag" else "held_pending_authorization"
+    initial_status = "blocked" if decision.verdict == "bark" else "awaiting_buyer" if decision.verdict == "wag" else "review_required"
     payment = Payment(id=payment_id, merchant_id=payload.merchant_id, idempotency_key=key, amount=float(payload.amount), currency=payload.currency, customer_ref=payload.customer_ref, status=initial_status, verdict=decision.verdict, risk_level=decision.risk_level, reasons_json=json.dumps(decision.reasons), rule_flags_json=json.dumps(flags), decision_source=decision.decision_source, request_fingerprint=fingerprint, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
     db.add(payment)
     try:
@@ -75,8 +75,8 @@ async def create_payment(payload: PaymentRequest, request: Request, db: Session 
     if decision.verdict == "bark":
         append_event(db, payment, "payment.blocked", {"reason": "Risk policy returned bark; no PayPal order was created"})
     elif decision.verdict == "growl":
-        # Authorization/hold is created only through the configured rail action; never imply funds are held locally.
-        append_event(db, payment, "payment.review_required", {"message": "Merchant review required before any capture; PayPal authorization must be established through buyer approval."})
+        # A risk verdict is not itself a payment authorization or a funds hold.
+        append_event(db, payment, "payment.review_required", {"message": "Merchant review required. No funds are held until a verified PayPal authorization exists."})
     else:
         append_event(db, payment, "payment.awaiting_buyer", {"message": "Payment passed screening. Buyer approval and PayPal capture are still required."})
     db.commit()
@@ -131,14 +131,14 @@ async def _merchant_action(payment_id: str, action: str, db: Session) -> Payment
     if payment.verdict != "growl":
         raise HTTPException(status_code=409, detail="Only Growl payments can be approved or voided")
     if action == "approve":
-        if payment.status not in ("held", "held_pending_authorization"):
-            raise HTTPException(status_code=409, detail=f"Payment cannot be approved from status '{payment.status}'. Buyer authorization is required first.")
+        if payment.status != "held":
+            raise HTTPException(status_code=409, detail=f"Payment cannot be approved from status '{payment.status}'. A verified PayPal authorization is required first.")
         if not payment.paypal_order_id:
             raise HTTPException(status_code=409, detail="No PayPal order is associated with this payment")
         # PayPal Orders v2 AUTHORIZE must be authorized after buyer approval before capture; don't fake that lifecycle.
         raise HTTPException(status_code=501, detail="Growl capture requires the PayPal buyer-approval and authorization-completion flow, which must be completed before capture is enabled.")
-    if payment.status not in ("held", "held_pending_authorization"):
-        raise HTTPException(status_code=409, detail=f"Payment cannot be voided from status '{payment.status}'")
+    if payment.status != "held":
+        raise HTTPException(status_code=409, detail=f"Payment cannot be voided from status '{payment.status}'. A verified PayPal authorization is required first.")
     if not payment.paypal_authorization_id:
         raise HTTPException(status_code=409, detail="No PayPal authorization exists to void. A local screening verdict is not a funds hold.")
     raise HTTPException(status_code=501, detail="Authorization void endpoint must be wired to the current PayPal Payments v2 authorization ID before this action is enabled.")
