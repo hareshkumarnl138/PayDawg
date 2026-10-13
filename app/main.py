@@ -163,6 +163,50 @@ async def void_payment(payment_id: str):
         update_status(db, payment_id, "failed", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
+@app.get("/paypal/return")
+async def paypal_return(token: str):
+    """Handle PayPal's buyer redirect after approval of a sandbox order."""
+    with db_session() as db:
+        row = db.execute("SELECT * FROM payments WHERE provider_order_id=?", (token,)).fetchone()
+        if not row:
+            raise HTTPException(404, "PayPal order was not found.")
+        payment = dict(row)
+        if payment["status"] not in {"screened"}:
+            return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
+    try:
+        rail = get_rail()
+        if payment["verdict"] == "Growl":
+            result = await rail.authorize(payment)
+            if not result.get("authorization_id") and not result.get("simulated"):
+                raise RailError("PayPal did not return an authorization ID.")
+            status = "held"
+        else:
+            result = await rail.capture(payment)
+            status = "captured"
+    except Exception as exc:
+        with db_session() as db:
+            update_status(db, payment["id"], "failed", "paypal.return_failed", {"error": str(exc)[:200]})
+        raise HTTPException(502, "PayPal buyer approval was received, but the payment operation failed.") from exc
+    with db_session() as db:
+        if result.get("authorization_id"):
+            db.execute("UPDATE payments SET provider_authorization_id=? WHERE id=?", (result["authorization_id"], payment["id"]))
+        if result.get("capture_id"):
+            db.execute("UPDATE payments SET provider_capture_id=? WHERE id=?", (result["capture_id"], payment["id"]))
+        update_status(db, payment["id"], status, "paypal.buyer_approved", {"simulated": result.get("simulated", False)})
+        return {"payment_id": payment["id"], "status": status, "verdict": payment["verdict"],
+                "message": "Authorization held for merchant review." if status == "held" else "Payment captured."}
+
+@app.get("/paypal/cancel")
+def paypal_cancel(token: str | None = None):
+    """Record a buyer-cancelled PayPal checkout without attempting capture."""
+    if not token:
+        return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
+    with db_session() as db:
+        row = db.execute("SELECT id FROM payments WHERE provider_order_id=?", (token,)).fetchone()
+        if row:
+            update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
+    return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
+
 @app.post("/webhooks/paypal")
 async def paypal_webhook(request: Request):
     payload = await request.json()
