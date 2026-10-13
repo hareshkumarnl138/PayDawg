@@ -1,6 +1,7 @@
 """Payment API routes with idempotency, screening, audit logging and merchant actions."""
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -20,6 +21,7 @@ from app.payments.paypal_adapter import PayPalAdapter, PayPalAPIError, PayPalCon
 from app.services.audit import append_event
 
 router = APIRouter(prefix="/v1", tags=["payments"])
+logger = logging.getLogger(__name__)
 
 
 def _fingerprint(request: PaymentRequest) -> str:
@@ -103,6 +105,7 @@ async def create_payment(payload: PaymentRequest, request: Request, response: Re
             result.approval_url = approval
             return result
         except (PayPalAPIError, PayPalConfigurationError) as exc:
+            logger.exception("PayPal order creation failed for payment %s", payment.id)
             payment.status = "rail_error"
             payment.updated_at = datetime.now(timezone.utc)
             append_event(db, payment, "paypal.order_creation_failed", {"error": str(exc)})
