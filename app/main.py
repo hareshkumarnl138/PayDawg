@@ -121,9 +121,10 @@ async def approve_payment(payment_id: str):
             raise HTTPException(409, f"Payment cannot be approved from status {payment['status']}.")
         if payment["status"] == "approved":
             return payment_dict(row)
+        capture_authorization = payment["verdict"] == "Growl" and payment["status"] in {"held", "approved"}
     try:
         rail = get_rail()
-        if payment["verdict"] == "Growl":
+        if payment["verdict"] == "Growl" and not capture_authorization:
             result = await rail.authorize(payment)
             auth_id = result.get("authorization_id")
             if not auth_id and not result.get("simulated"):
