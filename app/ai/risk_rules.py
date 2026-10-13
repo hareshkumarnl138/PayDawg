@@ -28,13 +28,7 @@ def evaluate_rules(db: Session, request: PaymentRequest, *, now: datetime | None
         reasons.append("Same customer and amount were submitted recently for this merchant")
 
     velocity_cutoff = now - timedelta(seconds=settings.velocity_window_seconds)
-    velocity_count = db.scalar(select(Payment.id).where(
-        Payment.merchant_id == request.merchant_id,
-        Payment.customer_ref == request.customer_ref,
-        Payment.created_at >= velocity_cutoff,
-        Payment.status.notin_(["blocked", "failed"]),
-    ).limit(settings.velocity_max_payments))
-    # Count explicitly; an existing request is never inferred from a mere limit query.
+    # Count prior attempts in the rolling window; this is distinct from idempotency replay.
     from sqlalchemy import func
     count = db.scalar(select(func.count()).select_from(Payment).where(
         Payment.merchant_id == request.merchant_id,
@@ -64,6 +58,8 @@ def evaluate_rules(db: Session, request: PaymentRequest, *, now: datetime | None
     flags["new_customer"] = prior_customer is None
     if flags["new_customer"]:
         reasons.append("No previously approved payment was found for this customer")
+    if flags["odd_hour"]:
+        flags["odd_hour"] = True
 
     # Time-of-day is a low-confidence signal; do not auto-block solely on it.
     active_hours = []
