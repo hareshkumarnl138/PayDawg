@@ -42,6 +42,7 @@ def reset_demo() -> dict:
         raise HTTPException(status_code=404, detail="Not found")
     from app.db.database import SessionLocal
     from app.db.models import MerchantBaseline, Payment, PaymentEvent
+    init_db()
     db = SessionLocal()
     try:
         db.query(PaymentEvent).delete()
