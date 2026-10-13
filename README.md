@@ -1,104 +1,66 @@
 # PayDawg
 
-> A payment gateway that thinks before it charges.
+PayDawg is a small FastAPI payment-screening MVP. Verdicts are **Wag** (low risk), **Growl** (review/authorization), and **Bark** (block). It is a learning/demo project, not a production fraud system.
 
-PayDawg is a hackathon MVP that screens payment requests before routing them through PayPal Sandbox. It combines deterministic fraud signals, a merchant-specific baseline (the Dawg's Notebook), and an optional LLM risk explanation to produce three verdicts:
+## Safety and scope
 
-- **Wag** — low risk; proceed through the PayPal Sandbox checkout flow.
-- **Growl** — medium risk; hold for explicit merchant review.
-- **Bark** — high risk or hard-rule violation; block before creating a PayPal order.
+- Default rail is `PAYPAL_MODE=mock`. **SIMULATED:** mock transactions never contact PayPal or move money.
+- The PayPal adapter is intended for PayPal **Sandbox only**. Never use live credentials.
+- UPI is a **SIMULATED stub only**; no UPI or bank integration exists.
+- LLM analysis is optional. Default `LLM_PROVIDER=none` uses deterministic rules only.
+- Exact duplicates and velocity breaches are hard Bark decisions and cannot be overridden by the LLM.
+- Events are append-only from the application; this is not a tamper-proof audit store.
+- No user accounts, ML training, mobile app, or public refund endpoint in this MVP.
 
-PayPal remains responsible for payment operations. This project is a demo, not a licensed payment gateway or a production fraud-prevention system. It must use synthetic data and sandbox credentials only.
+## Requirements and setup
 
-## MVP scope
-
-- FastAPI REST API with idempotent payment creation
-- Deterministic duplicate, velocity, and merchant-baseline checks
-- Optional structured LLM risk analysis with safe rules-only fallback
-- SQLite payments, per-merchant baseline, and append-only events
-- Demo dashboard and scripted Wag/Growl/Bark scenarios
-- PayPal Sandbox adapter configuration and webhook verification guidance
-- Unit tests and GitHub Actions test workflow
-
-## Quick start
-
-Requires Python 3.11 or newer.
+Python 3.11+.
 
 ```bash
+git clone https://github.com/hk8387121-cpu/PayDawg.git
+cd PayDawg
 python -m venv .venv
 # Windows PowerShell:
 .venv\\Scripts\\Activate.ps1
-# macOS/Linux:
-# source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env  # Windows: Copy-Item .env.example .env
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements.txt
+copy .env.example .env
+```
+
+On macOS/Linux use `cp .env.example .env`. The default configuration runs without credentials.
+
+## Run mock mode
+
+Keep `PAYPAL_MODE=mock` in `.env`, then run:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000/docs> for the API and <http://127.0.0.1:8000/> for the dashboard.
+Open http://127.0.0.1:8000 for the dashboard and http://127.0.0.1:8000/docs for API docs.
 
-## Configuration
-
-See `.env.example`. The application should start without third-party keys in local demo mode. To enable LLM explanations, configure the provider and API key. To enable PayPal operations, supply Sandbox client credentials and complete the verification steps in the official PayPal developer console. Never commit `.env` or credentials.
-
-## API
-
-- `GET /health` — health check
-- `POST /v1/payments` — screen and create a payment record
-- `GET /v1/payments` — list payments
-- `GET /v1/payments/{payment_id}` — payment details and events
-- `POST /v1/payments/{payment_id}/approve` — merchant approval for held payments (requires configured rail support)
-- `POST /v1/payments/{payment_id}/void` — void a held payment (requires configured rail support)
-- `POST /v1/demo/reset` — reset demo data; local/demo use only
-
-Payment status is not considered captured simply because an AI verdict is Wag. Buyer approval, PayPal API results, and verified webhooks must drive the actual payment status.
-
-## Decisions and safety properties
-
-- Exact idempotency-key replay returns the original request result and cannot create another charge.
-- A repeated payment signal and idempotent request replay are separate concepts.
-- Hard rules (for example, a configured duplicate or velocity breach) cannot be overridden by the LLM.
-- LLM timeout or invalid structured output falls back to deterministic rules and records `rules-only`.
-- A held transaction requires a deliberate merchant action.
-- Webhooks must be signature-verified before they can mutate payment state.
-- This demo does not claim to guarantee fraud detection. Thresholds are illustrative and require evaluation before any real-world use.
-
-## Testing
+## Tests and demo
 
 ```bash
-pytest -q
+pytest
+# With the app running, in a second terminal:
+python demo_shop/send_demo.py
 ```
 
-Tests use local data and mocked third-party calls; they do not move money. Sandbox integration tests must be run separately after credentials are configured.
+The demo sends a normal payment, an out-of-pattern amount, and an exact duplicate. It uses different idempotency keys so the duplicate reaches screening. Time-based flags and local history can affect the first two verdicts.
 
-## Deployment checklist
+Tests use a temporary SQLite database and mock rail; they do not contact PayPal or an LLM.
 
-1. Configure secrets through the host's environment/secret manager.
-2. Use a persistent SQLite volume or migrate to a managed database before relying on deployed data.
-3. Set an explicit CORS policy and trusted webhook settings.
-4. Verify PayPal webhook signatures and order lifecycle using Sandbox buyer and seller accounts.
-5. Run the test suite and exercise Wag, Growl, Bark, duplicate replay, velocity, and LLM-down scenarios.
-6. Add hosted URL, screenshots, AI-tool disclosure, and a public demo video to the hackathon submission.
+## PayPal Sandbox
 
-## Architecture
+1. Create a REST app in the PayPal Developer Dashboard's Sandbox.
+2. Put its sandbox client ID and secret in `.env`; never commit credentials.
+3. Set `PAYPAL_MODE=paypal` and retain `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`.
+4. Configure the sandbox webhook ID if testing webhooks.
+5. Create an order and follow its buyer approval URL before attempting an operation requiring buyer approval.
 
-```text
-Demo Shop / Dashboard
-        | REST
-        v
-FastAPI orchestration -> Rules + Merchant Baseline -> optional LLM
-        |                         |                     |
-        v                         v                     v
-PayPal Sandbox adapter      SQLite payments, notebook and append-only events
-        ^
-        | verified webhooks update payment status
-```
+**TODO before relying on live sandbox lifecycle paths:** verify current PayPal Orders v2 authorization, capture, void, refund, and webhook signature verification requirements against official developer docs. Manually test the entire sandbox lifecycle. This MVP is not production-ready.
 
-## License
+## Environment
 
-MIT. See [LICENSE](LICENSE).
-
-## Disclaimer
-
-PayDawg is a hackathon prototype. Verdicts are decision support, not a guarantee or certification of fraud. Never use this prototype to process real payments without a formal security, compliance, reliability, and payment-provider review.
+See `.env.example`. Settings are read from environment variables and a local `.env` file. Never put secrets in source control.
