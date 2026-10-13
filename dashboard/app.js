@@ -1,14 +1,72 @@
-const $ = (id) => document.getElementById(id);
-let payments = [];
-const symbols = {wag:"✓",growl:"!",bark:"×"};
-const money = (amount, currency) => { try { return new Intl.NumberFormat(undefined,{style:"currency",currency}).format(Number(amount)); } catch { return `${amount} ${currency}`; } };
-const stamp = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); };
-function toast(message){ const el=$("toast"); el.textContent=message; el.classList.add("show"); clearTimeout(toast.timer); toast.timer=setTimeout(()=>el.classList.remove("show"),3200); }
-async function api(path, options={}){ const response=await fetch(path,{headers:{"Content-Type":"application/json",...(options.headers||{})},...options}); const body=await response.json().catch(()=>({detail:response.statusText})); if(!response.ok) throw new Error(body.detail||`Request failed (${response.status})`); return body; }
-function filtered(){ const query=$("search").value.trim().toLowerCase(); const verdict=$("verdictFilter").value; return payments.filter(p=>(verdict==="all"||p.verdict===verdict)&&(!query||`${p.id} ${p.customer_ref} ${p.merchant_id}`.toLowerCase().includes(query))); }
-function render(){ const rows=filtered(); $("totalCount").textContent=payments.length; $("wagCount").textContent=payments.filter(p=>p.verdict==="wag").length; $("growlCount").textContent=payments.filter(p=>p.verdict==="growl").length; $("barkCount").textContent=payments.filter(p=>p.verdict==="bark").length; $("tableCount").textContent=`Showing ${rows.length} of ${payments.length} requests`; const tbody=$("paymentRows"); if(!rows.length){tbody.innerHTML='<tr><td colspan="5" class="empty">No payments yet. Run a demo scenario to get started.</td></tr>';return;} tbody.innerHTML=rows.map(p=>`<tr data-id="${escapeHtml(p.id)}"><td><div class="payment-name"><span class="payment-avatar">${escapeHtml((p.customer_ref||"?").slice(0,1).toUpperCase())}</span><div><div>${escapeHtml(p.customer_ref)}</div><div class="payment-id">${escapeHtml(p.id)}</div></div></div></td><td class="amount">${escapeHtml(money(p.amount,p.currency))}</td><td><span class="verdict-badge ${p.verdict}">${symbols[p.verdict]||"•"} ${p.verdict.toUpperCase()}</span></td><td class="status-text">${escapeHtml((p.status||"unknown").replaceAll("_"," "))}</td><td class="time-text">${escapeHtml(stamp(p.created_at))}</td></tr>`).join(""); tbody.querySelectorAll("tr[data-id]").forEach(row=>row.addEventListener("click",()=>showDetails(row.dataset.id))); }
-function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
-async function load(){try{payments=await api("/v1/payments?limit=100");render();}catch(err){toast(`Could not load payments: ${err.message}`);$("paymentRows").innerHTML='<tr><td colspan="5" class="empty">API unavailable. Check that FastAPI is running.</td></tr>';}}
-async function createScenario(scenario){ const data={wag:{amount:"35.00",customer_ref:"demo_regular_01",idempotency_key:`demo-wag-${crypto.randomUUID()}`},growl:{amount:"950.00",customer_ref:"demo_new_02",idempotency_key:`demo-growl-${crypto.randomUUID()}`},bark:{amount:"15.00",customer_ref:"demo_velocity_03",idempotency_key:`demo-bark-${crypto.randomUUID()}`}}[scenario]; data.merchant_id="demo_store";data.currency="USD";try{if(scenario==="bark"){for(let i=0;i<5;i++){await api("/v1/payments",{method:"POST",body:JSON.stringify({merchant_id:"demo_store",amount:String(3+i),currency:"USD",customer_ref:"demo_velocity_03",idempotency_key:`seed-velocity-${i}-${crypto.randomUUID()}`})});} }const result=await api("/v1/payments",{method:"POST",body:JSON.stringify(data)});toast(`${result.verdict.toUpperCase()}: ${result.reasons?.[0]||"Screening complete"}`);await load();}catch(err){toast(`Demo failed: ${err.message}`);}}
-async function showDetails(id){try{const p=await api(`/v1/payments/${encodeURIComponent(id)}`);$("detailContent").innerHTML=`<div class="eyebrow">PAYMENT DETAILS</div><h2>${escapeHtml(p.verdict.toUpperCase())} · ${escapeHtml(p.id)}</h2><p>${escapeHtml(money(p.amount,p.currency))} for ${escapeHtml(p.customer_ref)}. Current status: <b>${escapeHtml(p.status)}</b>.</p><h4>Risk reasons</h4><ul class="reason-list">${(p.reasons||[]).map(r=>`<li>${escapeHtml(r)}</li>`).join("")}</ul><h4>Rule signals</h4><ul class="reason-list">${Object.entries(p.rule_flags||{}).map(([k,v])=>`<li>${escapeHtml(k.replaceAll("_"," "))}: <b>${v?"triggered":"not triggered"}</b></li>`).join("")}</ul><h4>Decision provenance</h4><p>${escapeHtml(p.decision_source)} · ${escapeHtml(p.risk_level)} risk</p><h4>Audit history</h4><ul class="reason-list">${(p.events||[]).map(e=>`<li><b>${escapeHtml(e.event_type)}</b> — ${escapeHtml(stamp(e.created_at))}<br>${escapeHtml(JSON.stringify(e.payload||{}))}</li>`).join("")||"<li>No events available.</li>"}</ul>`;$("detailDialog").showModal();}catch(err){toast(err.message);}}
-$("refresh").addEventListener("click",load);$("search").addEventListener("input",render);$("verdictFilter").addEventListener("change",render);document.querySelectorAll("[data-scenario]").forEach(button=>button.addEventListener("click",()=>createScenario(button.dataset.scenario)));$("demoRun").addEventListener("click",async()=>{for(const scenario of ["wag","growl","bark"])await createScenario(scenario);});load();
+const body = document.getElementById("paymentsBody");
+const notice = document.getElementById("notice");
+let allPayments = [];
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {headers: {"Content-Type": "application/json", ...(options.headers || {})}, ...options});
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "Request failed");
+  return data;
+}
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function money(p) {
+  try { return new Intl.NumberFormat(undefined, {style:"currency", currency:p.currency}).format(p.amount); }
+  catch { return p.currency + " " + Number(p.amount).toFixed(2); }
+}
+async function load() {
+  try {
+    const health = await api("/health");
+    document.getElementById("railBadge").textContent = health.simulated ? "SIMULATED · MOCK RAIL" : "PAYPAL SANDBOX";
+    allPayments = (await api("/v1/payments")).payments || [];
+    document.getElementById("totalCount").textContent = allPayments.length;
+    document.getElementById("wagCount").textContent = allPayments.filter(p => p.verdict === "Wag").length;
+    document.getElementById("growlCount").textContent = allPayments.filter(p => p.verdict === "Growl").length;
+    document.getElementById("barkCount").textContent = allPayments.filter(p => p.verdict === "Bark").length;
+    render();
+  } catch (error) { notice.textContent = error.message; }
+}
+function render() {
+  const filter = document.getElementById("filter").value;
+  const rows = allPayments.filter(p => filter === "all" || p.verdict === filter);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">No payments yet. Submit one from API docs or run the demo script.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(p => {
+    const reasons = (p.reasons || []).map(escapeHtml).join(" ");
+    const held = ["held","approved"].includes(p.status) && p.verdict === "Growl";
+    const approval = p.approval_url ? '<br><a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(p.approval_url) + '">Buyer approval ↗</a>' : "";
+    return '<tr data-id="' + escapeHtml(p.id) + '">' +
+      '<td><span class="payment-id">' + escapeHtml(p.id.slice(0,8)) + '</span><br><small>' + escapeHtml(new Date(p.created_at).toLocaleString()) + '</small></td>' +
+      '<td>' + escapeHtml(p.customer_id) + '</td><td class="amount">' + escapeHtml(money(p)) + '</td>' +
+      '<td><span class="verdict ' + escapeHtml(p.verdict) + '">' + escapeHtml(p.verdict) + '</span></td>' +
+      '<td class="status">' + escapeHtml(p.status) + (p.rail === "mock" ? '<br><small>SIMULATED</small>' : '') + approval + '</td>' +
+      '<td class="reasons">' + reasons + '</td><td><div class="actions">' +
+      (held ? '<button class="approve" data-action="approve" data-id="' + escapeHtml(p.id) + '">Capture</button><button class="void" data-action="void" data-id="' + escapeHtml(p.id) + '">Void</button>' : '—') +
+      '</div></td></tr>';
+  }).join("");
+}
+body.addEventListener("click", async event => {
+  const action = event.target.closest("button[data-action]");
+  if (action) {
+    event.stopPropagation();
+    try {
+      const p = await api("/v1/payments/" + action.dataset.id + "/" + action.dataset.action, {method:"POST"});
+      notice.textContent = "Updated payment status: " + p.status;
+      await load();
+      await showDetails(action.dataset.id);
+    } catch (error) { notice.textContent = error.message; }
+    return;
+  }
+  const row = event.target.closest("tr[data-id]");
+  if (row) await showDetails(row.dataset.id);
+});
+async function showDetails(id) {
+  try { document.getElementById("details").textContent = JSON.stringify(await api("/v1/payments/" + id), null, 2); }
+  catch (error) { document.getElementById("details").textContent = error.message; }
+}
+document.getElementById("refreshBtn").addEventListener("click", load);
+document.getElementById("filter").addEventListener("change", render);
+load();
