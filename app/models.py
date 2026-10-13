@@ -15,8 +15,8 @@ class PaymentCreate(BaseModel):
     currency: str = Field(default="USD", min_length=3, max_length=3)
     customer_id: str = Field(min_length=1, max_length=128)
     description: str = Field(default="Demo purchase", max_length=255)
-    return_url: str = "http://localhost:8000/?payment=success"
-    cancel_url: str = "http://localhost:8000/?payment=cancelled"
+    return_url: str = "http://localhost:8000/paypal/return"
+    cancel_url: str = "http://localhost:8000/paypal/cancel"
 
 class LLMAnalysis(BaseModel):
     model_config = ConfigDict(extra="ignore")
