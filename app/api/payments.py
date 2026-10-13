@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -40,7 +40,7 @@ def _response(payment: Payment, *, with_events: bool = True) -> PaymentResponse:
 
 
 @router.post("/payments", response_model=PaymentResponse, status_code=status.HTTP_201_CREATED)
-async def create_payment(payload: PaymentRequest, request: Request, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> PaymentResponse:
+async def create_payment(payload: PaymentRequest, request: Request, response: Response, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> PaymentResponse:
     settings = get_settings()
     key = idempotency_key or payload.idempotency_key
     if key != payload.idempotency_key:
@@ -50,6 +50,7 @@ async def create_payment(payload: PaymentRequest, request: Request, db: Session 
     if existing:
         if existing.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="Idempotency key was already used with a different payment payload")
+        response.status_code = status.HTTP_200_OK
         return _response(existing)
 
     flags, rule_reasons = evaluate_rules(db, payload)
@@ -68,6 +69,7 @@ async def create_payment(payload: PaymentRequest, request: Request, db: Session 
         db.rollback()
         existing = db.scalar(select(Payment).where(Payment.merchant_id == payload.merchant_id, Payment.idempotency_key == key))
         if existing and existing.request_fingerprint == fingerprint:
+            response.status_code = status.HTTP_200_OK
             return _response(existing)
         raise HTTPException(status_code=409, detail="Idempotency conflict; retry with the original key or a new key")
 
