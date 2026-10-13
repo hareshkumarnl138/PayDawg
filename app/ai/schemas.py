@@ -53,4 +53,5 @@ class PaymentResponse(BaseModel):
     paypal_capture_id: str | None = None
     created_at: datetime
     updated_at: datetime
-    events: list[EventResponse] = []
+    approval_url: str | None = None
+    events: list[EventResponse] = Field(default_factory=list)
