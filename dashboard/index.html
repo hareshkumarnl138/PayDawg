@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220"><title>PayDawg — Risk-aware payments</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark">🐕</span><span>PayDawg<small>PAYMENT INTELLIGENCE</small></span></a>
+      <div class="nav-label">WORKSPACE</div><a class="nav-item active" href="#overview">▦ &nbsp; Overview</a><a class="nav-item" href="#payments">⇄ &nbsp; Payments</a><a class="nav-item" href="#how">◈ &nbsp; Risk engine</a>
+      <div class="sidebar-bottom"><span class="live-dot"></span>Sandbox-safe demo<small>AI-assisted · Human reviewed</small></div>
+    </aside>
+    <main class="main" id="overview">
+      <header class="topbar"><div><div class="eyebrow">MERCHANT WORKSPACE / OVERVIEW</div><h1>Good morning, operator.</h1><p class="subhead">Every payment gets a second look before it moves.</p></div><div class="top-actions"><span class="env-pill"><i></i> DEMO MODE</span><button class="btn btn-ghost" id="refresh">↻ Refresh</button></div></header>
+      <section class="hero"><div><span class="hero-kicker">PAYDAWG RISK INTELLIGENCE</span><h2>Trust, but verify.</h2><p>Deterministic rules first. AI for context. Your decision stays in control.</p><div class="hero-tags"><span>● Rules + AI</span><span>◈ Merchant baseline</span><span>✓ Auditable decisions</span></div></div><div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="hero-shield">🐕<b>✓</b></div><span class="float-chip chip-a">Risk scan complete</span><span class="float-chip chip-b">Human in control</span></div></section>
+      <section class="stats-grid">
+        <article class="stat-card"><div class="stat-top"><span>Total screened</span><span class="stat-icon">↗</span></div><div class="stat-value" id="totalCount">—</div><div class="stat-foot">Payment requests recorded</div></article>
+        <article class="stat-card"><div class="stat-top"><span>Wag · Low risk</span><span class="status-dot wag"></span></div><div class="stat-value" id="wagCount">—</div><div class="stat-foot">Passed initial screening</div></article>
+        <article class="stat-card"><div class="stat-top"><span>Growl · Review</span><span class="status-dot growl"></span></div><div class="stat-value" id="growlCount">—</div><div class="stat-foot">Needs merchant attention</div></article>
+        <article class="stat-card"><div class="stat-top"><span>Bark · Blocked</span><span class="status-dot bark"></span></div><div class="stat-value" id="barkCount">—</div><div class="stat-foot">Stopped before payment routing</div></article>
+      </section>
+      <section class="content-grid">
+        <article class="panel payment-panel" id="payments"><div class="panel-heading"><div><h3>Payment activity</h3><p>Recent requests and their screening decisions</p></div><button class="btn btn-primary btn-small" id="demoRun">▶ Run demo</button></div><div class="filter-row"><label class="search">⌕ <input id="search" placeholder="Search customer or payment ID"></label><select id="verdictFilter"><option value="all">All verdicts</option><option value="wag">Wag</option><option value="growl">Growl</option><option value="bark">Bark</option></select></div><div class="table-wrap"><table><thead><tr><th>PAYMENT</th><th>AMOUNT</th><th>VERDICT</th><th>STATUS</th><th>TIME</th></tr></thead><tbody id="paymentRows"><tr><td colspan="5" class="empty">Loading payment activity…</td></tr></tbody></table></div><div class="table-footer"><span id="tableCount">—</span><span>Latest first</span></div></article>
+        <aside class="panel signal-panel" id="how"><div class="panel-heading"><div><h3>Decision signals</h3><p>How PayDawg thinks</p></div><span class="soft-badge">LIVE RULES</span></div><div class="signal-list"><div class="signal"><span class="signal-symbol duplicate">⧉</span><div><b>Duplicate pattern</b><p>Repeated amount and customer in a time window</p></div><span class="signal-state">RULE</span></div><div class="signal"><span class="signal-symbol velocity">↯</span><div><b>Payment velocity</b><p>Too many attempts in a short period</p></div><span class="signal-state">RULE</span></div><div class="signal"><span class="signal-symbol baseline">⌁</span><div><b>Merchant baseline</b><p>Compare against approved payment history</p></div><span class="signal-state">NOTEBOOK</span></div><div class="signal"><span class="signal-symbol ai">✧</span><div><b>AI explanation</b><p>Structured risk context when configured</p></div><span class="signal-state">OPTIONAL</span></div></div><div class="note-box"><span>ⓘ</span><p><b>Human stays in control</b><br>Growl payments require review. The AI never confirms that funds moved.</p></div></aside>
+      </section>
+      <section class="demo-section"><div><div class="eyebrow">INTERACTIVE SANDBOX</div><h3>Test the three verdicts</h3><p>Use synthetic examples to see the decision engine at work.</p></div><div class="demo-buttons"><button class="scenario scenario-wag" data-scenario="wag"><span>✓</span><b>Wag</b><small>Usual payment</small></button><button class="scenario scenario-growl" data-scenario="growl"><span>!</span><b>Growl</b><small>Unusual amount</small></button><button class="scenario scenario-bark" data-scenario="bark"><span>×</span><b>Bark</b><small>Hard-rule block</small></button></div></section>
+      <footer><span>PAYDAWG <b>•</b> HACKATHON MVP</span><span>PayPal Sandbox only · No real money</span><a href="/docs">API documentation ↗</a></footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="detailDialog" class="detail-dialog"><form method="dialog"><button class="close-dialog" aria-label="Close">×</button></form><div id="detailContent"></div></dialog>
+  <script src="/static/app.js" defer></script>
+</body></html>
