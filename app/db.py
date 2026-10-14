@@ -98,6 +98,32 @@ def payment_dict(row):
         result[target] = json.loads(result.pop(source))
     return result
 
+def mark_captured(db, payment_id, event_type, payload=None):
+    """Move a payment to captured and teach the merchant's Notebook, exactly once.
+
+    The Notebook only learns from money that was really captured, so a Growl that is
+    held, voided or never approved cannot skew the baseline.
+    """
+    row = db.execute("SELECT merchant_id, amount, status FROM payments WHERE id=?", (payment_id,)).fetchone()
+    if not row:
+        return None
+    first_capture = row["status"] != "captured"
+    update_status(db, payment_id, "captured", event_type, payload)
+    if first_capture:
+        record_notebook_payment(db, row["merchant_id"], row["amount"])
+    return "captured"
+
+def reset_demo_data():
+    """Clear all payments, events and the Notebook so the demo can be run again.
+
+    Development/demo helper only (see demo_shop/reset_demo.py). The merchant row is kept.
+    """
+    with db_session() as db:
+        db.execute("DELETE FROM events")
+        db.execute("DELETE FROM webhook_events")
+        db.execute("DELETE FROM payments")
+        db.execute("UPDATE notebook SET payment_count=0, average_amount=0, max_amount=0, updated_at=?", (utc_now(),))
+
 def record_notebook_payment(db, merchant_id, amount):
     row = db.execute("SELECT payment_count, average_amount, max_amount FROM notebook WHERE merchant_id=?", (merchant_id,)).fetchone()
     if not row:

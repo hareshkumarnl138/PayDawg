@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.db import init_db, db_session, add_event, update_status, payment_dict, record_notebook_payment
+from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured
 from app.models import PaymentCreate
 from app.engine import decide
 from app.rails.base import RailError
@@ -29,6 +29,38 @@ def get_rail():
 @app.on_event("startup")
 def startup():
     init_db()
+
+async def settle_buyer_approval(payment: dict, success_event: str, failure_event: str) -> str:
+    """Run the rail step that follows buyer approval: Growl -> authorize (held), Wag -> capture.
+
+    Used by the real PayPal return route and by the SIMULATED mock buyer approval.
+    Returns the new status; marks the payment failed and re-raises if the rail errors.
+    """
+    try:
+        rail = get_rail()
+        if payment["verdict"] == "Growl":
+            result = await rail.authorize(payment)
+            if not result.get("authorization_id") and not result.get("simulated"):
+                raise RailError("Provider did not return an authorization ID.")
+            status = "held"
+        else:
+            result = await rail.capture(payment)
+            status = "captured"
+    except Exception as exc:
+        with db_session() as db:
+            update_status(db, payment["id"], "failed", failure_event, {"error": str(exc)[:200]})
+        raise
+    with db_session() as db:
+        if result.get("authorization_id"):
+            db.execute("UPDATE payments SET provider_authorization_id=? WHERE id=?", (result["authorization_id"], payment["id"]))
+        if result.get("capture_id"):
+            db.execute("UPDATE payments SET provider_capture_id=? WHERE id=?", (result["capture_id"], payment["id"]))
+        details = {"rail": settings.rail_provider, "simulated": result.get("simulated", False)}
+        if status == "captured":
+            mark_captured(db, payment["id"], success_event, details)
+        else:
+            update_status(db, payment["id"], "held", success_event, details)
+    return status
 
 @app.get("/", include_in_schema=False)
 def dashboard():
@@ -78,7 +110,6 @@ async def create_payment(body: PaymentCreate, idempotency_key: str | None = Head
                       {"verdict": decision["verdict"], "reasons": decision["reasons"], "decision_source": decision["decision_source"]})
         if status == "blocked":
             return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
-        record_notebook_payment(db, body.merchant_id, body.amount)
         stored = dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
     intent = "AUTHORIZE" if decision["verdict"] == "Growl" else "CAPTURE"
     try:
@@ -91,6 +122,15 @@ async def create_payment(body: PaymentCreate, idempotency_key: str | None = Head
         db.execute("UPDATE payments SET provider_order_id=?, approval_url=?, updated_at=? WHERE id=?",
                    (result.get("order_id"), result.get("approval_url"), datetime.now(timezone.utc).isoformat(), pid))
         add_event(db, pid, "rail.order_created", status, status, {"rail": settings.rail_provider, "intent": intent, "simulated": result.get("simulated", False)})
+        stored = dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
+    if result.get("simulated") and not result.get("approval_url"):
+        # SIMULATED: mock mode has no real buyer, so the buyer-approval step is simulated here.
+        # Wag is captured and Growl is held, exactly as the PayPal return route would do.
+        try:
+            await settle_buyer_approval(stored, "mock.buyer_approved", "mock.buyer_approval_failed")
+        except Exception as exc:
+            raise HTTPException(502, "Simulated rail could not complete the payment.") from exc
+    with db_session() as db:
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
 
 @app.get("/v1/payments")
@@ -147,8 +187,11 @@ async def approve_payment(payment_id: str):
             db.execute("UPDATE payments SET provider_authorization_id=? WHERE id=?", (result["authorization_id"], payment_id))
         if result.get("capture_id"):
             db.execute("UPDATE payments SET provider_capture_id=? WHERE id=?", (result["capture_id"], payment_id))
-        update_status(db, payment_id, new_status, "payment.authorized" if new_status == "held" else "payment.captured",
-                      {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
+        details = {"rail": settings.rail_provider, "simulated": result.get("simulated", False)}
+        if new_status == "captured":
+            mark_captured(db, payment_id, "payment.captured", details)
+        else:
+            update_status(db, payment_id, new_status, "payment.authorized", details)
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
 @app.post("/v1/payments/{payment_id}/void")
@@ -165,7 +208,7 @@ async def void_payment(payment_id: str):
     except Exception as exc:
         raise HTTPException(502, "Payment rail could not void the authorization.") from exc
     with db_session() as db:
-        update_status(db, payment_id, "failed", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
+        update_status(db, payment_id, "voided", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
 @app.get("/paypal/return")
@@ -179,27 +222,11 @@ async def paypal_return(token: str):
         if payment["status"] not in {"screened"}:
             return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
     try:
-        rail = get_rail()
-        if payment["verdict"] == "Growl":
-            result = await rail.authorize(payment)
-            if not result.get("authorization_id") and not result.get("simulated"):
-                raise RailError("PayPal did not return an authorization ID.")
-            status = "held"
-        else:
-            result = await rail.capture(payment)
-            status = "captured"
+        status = await settle_buyer_approval(payment, "paypal.buyer_approved", "paypal.return_failed")
     except Exception as exc:
-        with db_session() as db:
-            update_status(db, payment["id"], "failed", "paypal.return_failed", {"error": str(exc)[:200]})
         raise HTTPException(502, "PayPal buyer approval was received, but the payment operation failed.") from exc
-    with db_session() as db:
-        if result.get("authorization_id"):
-            db.execute("UPDATE payments SET provider_authorization_id=? WHERE id=?", (result["authorization_id"], payment["id"]))
-        if result.get("capture_id"):
-            db.execute("UPDATE payments SET provider_capture_id=? WHERE id=?", (result["capture_id"], payment["id"]))
-        update_status(db, payment["id"], status, "paypal.buyer_approved", {"simulated": result.get("simulated", False)})
-        return {"payment_id": payment["id"], "status": status, "verdict": payment["verdict"],
-                "message": "Authorization held for merchant review." if status == "held" else "Payment captured."}
+    return {"payment_id": payment["id"], "status": status, "verdict": payment["verdict"],
+            "message": "Authorization held for merchant review." if status == "held" else "Payment captured."}
 
 @app.get("/paypal/cancel")
 def paypal_cancel(token: str | None = None):
@@ -251,11 +278,11 @@ async def paypal_webhook(request: Request):
         payment_id, old_status = row["id"], row["status"]
         event_type = payload.get("event_type", "")
         if event_type == "PAYMENT.CAPTURE.COMPLETED":
-            update_status(db, payment_id, "captured", "webhook.paypal.capture_completed", {"event_id": event_id})
+            mark_captured(db, payment_id, "webhook.paypal.capture_completed", {"event_id": event_id})
         elif event_type in {"PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"}:
             update_status(db, payment_id, "refunded", "webhook.paypal.refund_or_reversal", {"event_id": event_id})
         elif event_type in {"PAYMENT.AUTHORIZATION.VOIDED", "CHECKOUT.ORDER.VOIDED"}:
-            update_status(db, payment_id, "failed", "webhook.paypal.voided", {"event_id": event_id})
+            update_status(db, payment_id, "voided", "webhook.paypal.voided", {"event_id": event_id})
         else:
             add_event(db, payment_id, "webhook.paypal.received", old_status, old_status, {"event_id": event_id, "event_type": event_type})
     return {"received": True, "matched": True}

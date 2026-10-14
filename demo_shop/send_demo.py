@@ -2,6 +2,7 @@
 import json
 import os
 import urllib.request
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 
 BASE_URL = os.getenv('PAYDAWG_URL', 'http://127.0.0.1:8000')
@@ -23,3 +24,14 @@ if __name__ == '__main__':
     duplicate = post_payment(18.50, 'demo-customer-01', 'demo-duplicate-001', 'Repeated demo purchase')
     for label, result in (('normal', normal), ('out-of-pattern', unusual), ('duplicate', duplicate)):
         print('{}: verdict={} status={} id={}'.format(label, result['verdict'], result['status'], result['id']))
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(normal['created_at'])).total_seconds()
+    except (KeyError, ValueError):
+        age = 0
+    if age > 60:
+        print('\nNote: these are REPLAYED payments from an earlier run (same idempotency keys), so nothing new '
+              'was created.\nFor a fresh take in mock mode, run: python demo_shop/reset_demo.py   then run this script again.')
+    if [normal['verdict'], unusual['verdict'], duplicate['verdict']] != ['Wag', 'Growl', 'Bark']:
+        print('\nExpected Wag, Growl, Bark. Earlier demo payments are probably still remembered '
+              '(duplicate and velocity rules, fixed idempotency keys).\n'
+              'In mock mode, run: python demo_shop/reset_demo.py   then run this script again.')
