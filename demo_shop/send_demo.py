@@ -15,7 +15,16 @@ def post_payment(amount, customer, key, description):
         with urllib.request.urlopen(request, timeout=20) as response:
             return json.loads(response.read().decode())
     except HTTPError as exc:
-        print('Request failed:', exc.code, exc.read().decode())
+        detail = exc.read().decode()
+        if exc.code == 409:
+            print('\nThis idempotency key already exists with a different request body.')
+            print('That happens when the database was created by an older build of PayDawg.')
+            print('In mock mode, start fresh with:  python demo_shop/reset_demo.py')
+            raise SystemExit(1)
+        if exc.code == 429:
+            print('\nRate limited (429): too many payment attempts. Wait a few seconds and run this again.')
+            raise SystemExit(1)
+        print('Request failed:', exc.code, detail)
         raise
 
 if __name__ == '__main__':

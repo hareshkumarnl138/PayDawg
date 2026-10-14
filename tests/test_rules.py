@@ -94,3 +94,9 @@ def test_returning_customer_lowers_score():
     earlier = payment(20, 'c1', created_at=(datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(), status='captured')
     result = evaluate_rules(payment(20, 'c1', order_ref='x'), night, [earlier])
     assert result['risk_score'] == 0 or result['risk_level'] == 'low'
+
+
+def test_failed_attempt_does_not_make_the_retry_a_duplicate():
+    earlier = payment(18, 'c1', status='failed')
+    result = evaluate_rules(payment(18, 'c1'), ALL_HOURS, [earlier])
+    assert 'exact_duplicate' not in result['flags']

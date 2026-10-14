@@ -11,6 +11,7 @@ Soft signals add to a 0-100 risk score (>= 40 means review, i.e. Growl):
 """
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from app.config import settings
 
 WEIGHTS = {"unusual_amount": 50, "merchant_surge": 40, "new_customer": 20, "odd_hour": 20}
@@ -18,9 +19,16 @@ TRUSTED_DISCOUNT = 20
 REVIEW_THRESHOLD = 40
 
 
+def _now() -> datetime:
+    """Current time in the merchant's timezone (MERCHANT_TIMEZONE), else the server's local time."""
+    if settings.merchant_timezone:
+        return datetime.now(ZoneInfo(settings.merchant_timezone))
+    return datetime.now().astimezone()
+
+
 def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -> dict:
     flags, reasons = [], []
-    now = datetime.now().astimezone()
+    now = _now()
     amount = float(payment["amount"])
     customer = str(payment["customer_id"])
     merchant_id = payment["merchant_id"]
@@ -48,7 +56,7 @@ def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -
             if status == "captured":
                 trusted = True
             same_order = (old.get("order_ref") or "").strip() == order_ref
-            if age <= window_seconds and same_order and status != "blocked" and float(old.get("amount", 0)) == amount:
+            if age <= window_seconds and same_order and status not in ("blocked", "failed") and float(old.get("amount", 0)) == amount:
                 duplicate = True
         if age <= velocity_seconds:
             merchant_velocity += 1

@@ -14,7 +14,10 @@ async def decide(payment: dict, notebook: dict, recent_payments: list[dict]) -> 
         source = "hard-rules"
     elif llm:
         ranks = {"low": 0, "medium": 1, "high": 2}
-        level = max((level, llm["risk_level"]), key=lambda x: ranks[x])
+        # The AI may ask for a human review (Growl) but can never block a payment on its own:
+        # only the deterministic hard rules produce a Bark.
+        llm_level = "medium" if llm["risk_level"] == "high" else llm["risk_level"]
+        level = max((level, llm_level), key=lambda x: ranks[x])
         for reason in llm.get("reasons", []):
             if reason and reason not in reasons:
                 reasons.append(reason)

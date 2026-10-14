@@ -1,5 +1,4 @@
 """PayPal REST Orders v2 sandbox adapter."""
-import base64
 import time
 import httpx
 from app.config import settings
@@ -53,8 +52,8 @@ class PayPalRail(Rail):
                 "amount": {"currency_code": payment["currency"], "value": f'{payment["amount"]:.2f}'},
             }],
             "application_context": {
-                "return_url": payment.get("return_url") or "http://localhost:8000/?payment=success",
-                "cancel_url": payment.get("cancel_url") or "http://localhost:8000/?payment=cancelled",
+                "return_url": payment.get("return_url") or settings.public_base_url + "/paypal/return",
+                "cancel_url": payment.get("cancel_url") or settings.public_base_url + "/paypal/cancel",
                 "user_action": "PAY_NOW",
             },
         }

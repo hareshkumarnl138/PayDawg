@@ -106,17 +106,24 @@ def mark_captured(db, payment_id, event_type, payload=None):
     The Notebook only learns from money that was really captured, so a Growl that is
     held, voided or never approved cannot skew the baseline.
     """
-    row = db.execute("SELECT merchant_id, amount, status FROM payments WHERE id=?", (payment_id,)).fetchone()
+    row = db.execute("SELECT merchant_id, amount, status, verdict FROM payments WHERE id=?", (payment_id,)).fetchone()
     if not row:
         return None
     first_capture = row["status"] != "captured"
     update_status(db, payment_id, "captured", event_type, payload)
     if first_capture:
-        record_notebook_payment(db, row["merchant_id"], row["amount"])
+        learned = row["amount"]
+        if row["verdict"] == "Growl":
+            # A merchant-approved outlier teaches the Notebook only up to the "unusual" limit, so one big
+            # approved payment cannot make every later big payment look normal.
+            nb = db.execute("SELECT payment_count, average_amount FROM notebook WHERE merchant_id=?", (row["merchant_id"],)).fetchone()
+            if nb and nb["payment_count"]:
+                learned = min(learned, max(nb["average_amount"], 1.0) * settings.large_amount_multiple)
+        record_notebook_payment(db, row["merchant_id"], learned)
     return "captured"
 
 def reset_demo_data():
-    """Clear all payments, events and the Notebook so the demo can be run again.
+    """Clear ALL payments, events and Notebook counters (every merchant) so the demo can be run again.
 
     Development/demo helper only (see demo_shop/reset_demo.py). The merchant row is kept.
     """

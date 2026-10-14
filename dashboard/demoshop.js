@@ -27,21 +27,43 @@
   const send = (amount, customer, desc, order, key) =>
     post({amount, currency: "USD", customer_id: customer, description: desc, order_ref: order || null}, key);
 
+  // Every scenario is self-contained: it sends whatever baseline it needs and uses a fresh customer
+  // each run, so a button shows what its label promises no matter what was clicked before.
+  let run_no = 0;
+  const who = name => name + "-" + Date.now().toString(36).slice(-4) + "-" + run_no;
   const scenarios = {
-    normal: async () => { await send(18, "demo-customer-01", "Normal demo purchase", ref()); say("Sent one normal purchase."); },
-    again: async () => { await send(18, "demo-customer-01", "Bought the same thing again", ref()); say("Same customer and amount, but a NEW order ref: a genuine repeat purchase, not a duplicate."); },
-    bulk: async () => { await send(72, "demo-customer-01", "4 items in one order (4 x 18)", ref()); say("One payment of 72 for 4 items. Far below 5x the shop average, so no alarm once the Notebook has learned a few payments."); },
-    four: async () => { for (let i = 1; i <= 4; i++) await send(18, "demo-customer-01", "Separate purchase " + i, ref()); say("Four separate purchases of 18, each with its own order ref. One customer stays under the velocity limit of 5 (if you already bought several times in the last 10 minutes, the limit can still stop the later ones)."); },
-    dbl: async () => { const r = ref(); await send(18, "demo-customer-03", "Double-clicked Pay", r); await send(18, "demo-customer-03", "Double-clicked Pay", r); say("Same order ref sent twice within 2 minutes: the second is blocked, so nobody is charged twice."); },
-    large: async () => { await send(950, "demo-customer-02", "Out-of-pattern demo purchase", ref()); say("A large amount from a new customer."); },
-    rapid: async () => { for (let i = 1; i <= 6; i++) await send(10 + i, "rapid-buyer", "Rapid purchase " + i, ref()); say("One customer, 6 payments in a row. The 6th trips the per-customer velocity limit."); },
+    normal: async () => { await send(18, who("shopper"), "Normal demo purchase", ref()); say("One ordinary purchase: Wag, charged straight away."); },
+    again: async () => {
+      const c = who("regular");
+      await send(18, c, "First purchase", ref());
+      await send(18, c, "Bought the same thing again", ref());
+      say("Same customer, same amount, but a NEW order ref: a genuine repeat purchase, so both go through.");
+    },
+    bulk: async () => {
+      const c = who("bulk-buyer");
+      await send(18, c, "Single item", ref());
+      await send(72, c, "4 items in one order (4 x 18)", ref());
+      say("One payment of 72 for 4 items. That is below 5x the shop average, so it is not treated as unusual.");
+    },
+    four: async () => { const c = who("frequent"); for (let i = 1; i <= 4; i++) await send(18, c, "Separate purchase " + i, ref());
+      say("Four separate purchases of 18, each with its own order ref. One customer stays under the velocity limit of 5."); },
+    dbl: async () => { const c = who("clicker"), r = ref(); await send(18, c, "Double-clicked Pay", r); await send(18, c, "Double-clicked Pay", r);
+      say("Same order ref sent twice within 2 minutes: the second is blocked, so nobody is charged twice."); },
+    large: async () => {
+      await send(18, who("regular-shopper"), "Ordinary purchase (sets the baseline)", ref());
+      await send(950, who("stranger"), "Out-of-pattern demo purchase", ref());
+      say("A baseline purchase first, then 950 from a customer never seen before: far above this shop's normal, so it is held for review.");
+    },
+    rapid: async () => { const c = who("rapid-buyer"); for (let i = 1; i <= 6; i++) await send(10 + i, c, "Rapid purchase " + i, ref());
+      say("One customer, 6 payments in a row. The 6th trips the per-customer velocity limit and is blocked."); },
     burst: async () => {
-      for (let i = 1; i <= 17; i++) { await send(1 + (i % 3), "bot-" + i + "-" + Date.now().toString(36), "Tiny test payment " + i, ref()); await window.load(); await sleep(900); }
+      for (let i = 1; i <= 17; i++) { await send(1 + (i % 3), who("bot" + i), "Tiny test payment " + i, ref()); await window.load(); await sleep(1200); }
       say("17 tiny payments from 17 different customers: a card-testing pattern. Past 15 in 10 minutes, new ones are flagged and held.");
     },
     hammer: async () => {
+      // Deliberately exceed the per-client rate limit so the Dawg falls asleep behind the sign.
       let sent = 0;
-      for (let i = 1; i <= 16; i++) { await send(1, "hammer-" + i + "-" + Date.now().toString(36), "Hammer test " + i, ref()); sent++; }
+      for (let i = 1; i <= 16; i++) { await send(1, who("hammer" + i), "Hammer test " + i, ref()); sent++; }
       say("Sent " + sent + " payments without being stopped.");
     },
     demo: async () => {
@@ -52,15 +74,17 @@
     }
   };
 
-  async function run(fn) {
+  async function run(fn, name) {
+    if (typeof fn !== "function") { say("No such scenario: " + name, true); return; }
     if (busy) return;
+    run_no++;
     busy = true; panel.querySelectorAll("button").forEach(b => { b.disabled = true; });
     try { await fn(); }
     catch (error) { say(error.status === 429 ? "429 Too Many Requests. Dawg is resting, try again in a few seconds." : error.message, true); }
     finally { busy = false; panel.querySelectorAll("button").forEach(b => { b.disabled = false; }); await window.load(); }
   }
 
-  $("shopScenarios").addEventListener("click", e => { const sc = e.target.dataset.sc; if (sc) run(scenarios[sc]); });
+  $("shopScenarios").addEventListener("click", e => { const sc = e.target.dataset.sc; if (sc) run(scenarios[sc], sc); });
   $("shopForm").addEventListener("submit", e => {
     e.preventDefault();
     run(async () => {
@@ -71,8 +95,7 @@
     });
   });
   $("shopReset").addEventListener("click", () => run(async () => {
-    const response = await fetch("/v1/demo/reset", {method: "POST"});
-    if (!response.ok) throw new Error("Reset is only available in mock mode.");
+    await window.api("/v1/demo/reset", {method: "POST"});
     window.rlRemaining = 99; say("Demo reset: payments and the Notebook are cleared.");
   }));
   window.addEventListener("dawg:awake", () => { window.rlRemaining = 99; });

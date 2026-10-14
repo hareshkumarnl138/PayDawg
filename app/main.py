@@ -1,22 +1,132 @@
 """PayDawg FastAPI MVP."""
 import hashlib
 import json
+import logging
+import math
+import secrets
+import sqlite3
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from zoneinfo import ZoneInfo
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data
-from app.models import PaymentCreate
+from app.models import PaymentCreate, utc_now
 from app.engine import decide
 from app.ratelimit import limiter, client_key
 from app.rails.base import RailError
 from app.rails.mock import MockRail
 from app.rails.paypal import PayPalRail
 
-app = FastAPI(title="PayDawg", version="1.0.0", description="Risk-aware payment orchestration MVP")
+logger = logging.getLogger("paydawg")
+CLAIM_TIMEOUT_SECONDS = 120  # an "approved" capture older than this is treated as abandoned and may be retried
+
+
+# Only these fields identify a payment request. Hashing an explicit list (instead of the whole model)
+# keeps stored idempotency fingerprints stable when unrelated request fields are added or removed.
+FINGERPRINT_FIELDS = ("merchant_id", "amount", "currency", "customer_id", "description", "order_ref")
+FINGERPRINT_VERSION = "v2"
+MAX_IDEMPOTENCY_KEY_LENGTH = 255
+DEFAULT_MERCHANT = "demo-merchant"
+
+
+def request_fingerprint(data: dict) -> str:
+    payload = {field: data.get(field) for field in FINGERPRINT_FIELDS}
+    return FINGERPRINT_VERSION + ":" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def validate_config():
+    """Fail at startup, with a clear message, instead of failing on the first payment."""
+    if settings.rail_provider not in {"mock", "paypal"}:
+        raise RuntimeError(f"PAYPAL_MODE must be 'mock' or 'paypal', got '{settings.rail_provider}'.")
+    if settings.llm_provider not in {"none", "ollama", "http_api"}:
+        raise RuntimeError(f"LLM_PROVIDER must be 'none', 'ollama' or 'http_api', got '{settings.llm_provider}'.")
+    if settings.merchant_timezone:
+        try:
+            ZoneInfo(settings.merchant_timezone)
+        except Exception as exc:
+            raise RuntimeError(f"MERCHANT_TIMEZONE '{settings.merchant_timezone}' is not a valid IANA timezone.") from exc
+    if settings.rail_provider == "paypal" and not settings.admin_token:
+        logger.warning("ADMIN_TOKEN is not set: anyone who can reach this server can approve or void payments.")
+    if not settings.trust_proxy_headers:
+        logger.info("Rate limit keys on the connecting address. uvicorn honours X-Forwarded-For from allowed peers "
+                    "by default, so run it with --no-proxy-headers unless a proxy you control sits in front.")
+
+
+def startup():
+    validate_config()
+    init_db()
+    limiter.reset()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    startup()
+    yield
+
+
+def require_admin(request: Request):
+    """Protect the merchant console endpoints when ADMIN_TOKEN is set (header X-Admin-Token or Bearer)."""
+    token = settings.admin_token
+    if not token:
+        return
+    supplied = request.headers.get("x-admin-token", "")
+    auth = request.headers.get("authorization", "")
+    if not supplied and auth.lower().startswith("bearer "):
+        supplied = auth[7:]
+    if not secrets.compare_digest(supplied.encode(), token.encode()):
+        raise HTTPException(401, "Admin token required.", headers={"WWW-Authenticate": "Bearer"})
+
+
+app = FastAPI(title="PayDawg", version="1.0.0", description="Risk-aware payment orchestration MVP", lifespan=lifespan)
+
+
+MAX_ECHO_DEPTH = 6        # how deep an echoed value may nest before it is summarised
+MAX_ECHO_ITEMS = 20       # how many list items / dict keys of it are echoed
+MAX_ECHO_CHARS = 200      # how much of an echoed string is kept
+
+
+def _json_safe(value, depth: int = 0):
+    """Bound and sanitise a value echoed back in a 422 body.
+
+    FastAPI echoes the offending input. Unbounded, that lets a client choose the response: a NaN
+    amount is not JSON-serialisable, and a deeply nested body overflows the encoder's recursion -
+    either one would turn a clean 422 into a 500.
+    """
+    if depth > MAX_ECHO_DEPTH:
+        return "<nested value omitted>"
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, str):
+        return value if len(value) <= MAX_ECHO_CHARS else value[:MAX_ECHO_CHARS] + "..."
+    if isinstance(value, dict):
+        return {k: _json_safe(v, depth + 1) for k, v in list(value.items())[:MAX_ECHO_ITEMS]}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v, depth + 1) for v in list(value)[:MAX_ECHO_ITEMS]]
+    return value
+
+
+MAX_BODY_BYTES = 64 * 1024  # a payment request is a few hundred bytes; nothing legitimate comes close
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    """Reject an oversized body up front instead of buffering it into memory."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": f"Request body must be at most {MAX_BODY_BYTES} bytes."})
+    return await call_next(request)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(_json_safe(exc.errors()))})
 DASHBOARD = Path(__file__).resolve().parent.parent / "dashboard"
 app.mount("/dashboard", StaticFiles(directory=str(DASHBOARD)), name="dashboard")
 
@@ -26,11 +136,6 @@ def get_rail():
     if settings.rail_provider == "paypal":
         return PayPalRail()
     raise HTTPException(500, "Unsupported PAYPAL_MODE. Choose mock or paypal.")
-
-@app.on_event("startup")
-def startup():
-    init_db()
-    limiter.reset()
 
 async def settle_buyer_approval(payment: dict, success_event: str, failure_event: str) -> str:
     """Run the rail step that follows buyer approval: Growl -> authorize (held), Wag -> capture.
@@ -73,7 +178,7 @@ def rate_limit_status(request: Request):
     """Is this client currently locked out? The dashboard polls this so the Dawg can sleep on cue."""
     return limiter.status(client_key(request))
 
-@app.post("/v1/demo/reset")
+@app.post("/v1/demo/reset", dependencies=[Depends(require_admin)])
 def demo_reset():
     """Mock mode only: wipe demo payments and the Notebook (same as demo_shop/reset_demo.py)."""
     if settings.rail_provider != "mock":
@@ -102,8 +207,10 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
         raise HTTPException(503, "PayPal sandbox credentials are not configured.")
     request_data = body.model_dump()
     request_data["currency"] = body.currency.upper()
-    request_hash = hashlib.sha256(json.dumps(request_data, sort_keys=True).encode()).hexdigest()
+    request_hash = request_fingerprint(request_data)
     key = (idempotency_key or "").strip() or None
+    if key and len(key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise HTTPException(400, f"Idempotency-Key must be at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters.")
     with db_session() as db:
         merchant = db.execute("SELECT id FROM merchants WHERE id=?", (body.merchant_id,)).fetchone()
         if not merchant:
@@ -112,24 +219,42 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
             existing = db.execute("SELECT * FROM payments WHERE merchant_id=? AND idempotency_key=?", (body.merchant_id, key)).fetchone()
             if existing:
                 if existing["request_hash"] != request_hash:
+                    if not str(existing["request_hash"]).startswith(FINGERPRINT_VERSION + ":"):
+                        raise HTTPException(409, "This Idempotency-Key was stored by an older build of PayDawg, so the "
+                                                 "request cannot be compared. In mock mode run demo_shop/reset_demo.py, "
+                                                 "or send a new key.")
                     raise HTTPException(409, "Idempotency key was already used for a different request.")
                 return payment_dict(existing)
         notebook_row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (body.merchant_id,)).fetchone()
         notebook = dict(notebook_row) if notebook_row else {}
-        recent = [dict(row) for row in db.execute(
-            "SELECT merchant_id, amount, customer_id, order_ref, created_at, status FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100",
-            (body.merchant_id,)).fetchall()]
+        cols = "id, merchant_id, amount, customer_id, order_ref, created_at, status"
+        recent = {row["id"]: dict(row) for row in db.execute(
+            f"SELECT {cols} FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100", (body.merchant_id,)).fetchall()}
+        # A long-standing customer must not look "new" just because their last payment is older than the 100 above.
+        for row in db.execute(f"SELECT {cols} FROM payments WHERE merchant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 25",
+                              (body.merchant_id, body.customer_id)).fetchall():
+            recent.setdefault(row["id"], dict(row))
+        recent = list(recent.values())
         pid = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
         payment = {"id": pid, **request_data, "created_at": created_at}
         decision = await decide(payment, notebook, recent)
         status = "blocked" if decision["verdict"] == "Bark" else "screened"
-        db.execute("""INSERT INTO payments
-            (id,merchant_id,idempotency_key,request_hash,amount,currency,customer_id,description,order_ref,verdict,risk_level,reasons_json,flags_json,decision_source,status,rail,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, body.merchant_id, key, request_hash, body.amount, body.currency.upper(), body.customer_id,
-             body.description, (body.order_ref or "").strip() or None, decision["verdict"], decision["risk_level"], json.dumps(decision["reasons"]),
-             json.dumps(decision["flags"]), decision["decision_source"], "created", settings.rail_provider, created_at, created_at))
+        try:
+            db.execute("""INSERT INTO payments
+                (id,merchant_id,idempotency_key,request_hash,amount,currency,customer_id,description,order_ref,verdict,risk_level,reasons_json,flags_json,decision_source,status,rail,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid, body.merchant_id, key, request_hash, body.amount, body.currency.upper(), body.customer_id,
+                 body.description, (body.order_ref or "").strip() or None, decision["verdict"], decision["risk_level"], json.dumps(decision["reasons"]),
+                 json.dumps(decision["flags"]), decision["decision_source"], "created", settings.rail_provider, created_at, created_at))
+        except sqlite3.IntegrityError:
+            # Two requests with the same Idempotency-Key raced past the check above; the loser returns the winner's payment.
+            existing = db.execute("SELECT * FROM payments WHERE merchant_id=? AND idempotency_key=?", (body.merchant_id, key)).fetchone() if key else None
+            if not existing:
+                raise
+            if existing["request_hash"] != request_hash:
+                raise HTTPException(409, "Idempotency key was already used for a different request.")
+            return payment_dict(existing)
         add_event(db, pid, "payment.created", None, "created", {"amount": body.amount, "currency": body.currency.upper()})
         update_status(db, pid, status, "payment.screened",
                       {"verdict": decision["verdict"], "reasons": decision["reasons"], "decision_source": decision["decision_source"]})
@@ -138,7 +263,8 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
         stored = dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
     intent = "AUTHORIZE" if decision["verdict"] == "Growl" else "CAPTURE"
     try:
-        result = await get_rail().create({**stored, "return_url": body.return_url, "cancel_url": body.cancel_url}, intent)
+        result = await get_rail().create({**stored, "return_url": settings.public_base_url + "/paypal/return",
+                                          "cancel_url": settings.public_base_url + "/paypal/cancel"}, intent)
     except Exception as exc:
         with db_session() as db:
             update_status(db, pid, "failed", "rail.create_failed", {"error": str(exc)[:200]})
@@ -158,40 +284,54 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
     with db_session() as db:
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
 
-@app.get("/v1/payments")
-def list_payments(limit: int = 100):
+@app.get("/v1/payments", dependencies=[Depends(require_admin)])
+def list_payments(limit: int = 100, merchant_id: str = DEFAULT_MERCHANT):
+    """One merchant's payments. The console is single-tenant: ADMIN_TOKEN is one operator
+    credential, not a per-merchant login, so scoping keeps shops from seeing each other by accident."""
     limit = max(1, min(limit, 500))
     with db_session() as db:
-        rows = db.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return {"payments": [payment_dict(row) for row in rows]}
+        rows = db.execute("SELECT * FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT ?",
+                          (merchant_id, limit)).fetchall()
+        return {"merchant_id": merchant_id, "payments": [payment_dict(row) for row in rows]}
 
-@app.get("/v1/payments/{payment_id}")
-def get_payment(payment_id: str):
+@app.get("/v1/payments/{payment_id}", dependencies=[Depends(require_admin)])
+def get_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
     with db_session() as db:
-        row = db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        row = db.execute("SELECT * FROM payments WHERE id=? AND merchant_id=?", (payment_id, merchant_id)).fetchone()
         if not row:
             raise HTTPException(404, "Payment not found.")
         result = payment_dict(row)
         result["events"] = [dict(e) for e in db.execute("SELECT * FROM events WHERE payment_id=? ORDER BY id", (payment_id,)).fetchall()]
         return result
 
-@app.post("/v1/payments/{payment_id}/approve")
-async def approve_payment(payment_id: str):
+@app.post("/v1/payments/{payment_id}/approve", dependencies=[Depends(require_admin)])
+async def approve_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
     with db_session() as db:
-        row = db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        row = db.execute("SELECT * FROM payments WHERE id=? AND merchant_id=?", (payment_id, merchant_id)).fetchone()
         if not row:
             raise HTTPException(404, "Payment not found.")
         payment = dict(row)
-        if payment["status"] not in {"screened", "held", "approved"}:
-            raise HTTPException(409, f"Payment cannot be approved from status {payment['status']}.")
-        if payment["status"] == "approved":
-            return payment_dict(row)
-        if settings.rail_provider == "paypal" and payment["status"] == "screened":
+        status = payment["status"]
+        if status not in {"screened", "held", "approved"}:
+            raise HTTPException(409, f"Payment cannot be approved from status {status}.")
+        if status == "approved":
+            # "approved" means a capture is in flight. Only an abandoned one (older than the timeout) may be retried.
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(payment["updated_at"])).total_seconds()
+            except (ValueError, TypeError):
+                age = CLAIM_TIMEOUT_SECONDS
+            if age < CLAIM_TIMEOUT_SECONDS:
+                raise HTTPException(409, "Capture is already in progress for this payment.")
+        if settings.rail_provider == "paypal" and status == "screened":
             raise HTTPException(409, "Buyer must follow the PayPal approval_url first.")
-        capture_authorization = payment["verdict"] == "Growl" and payment["status"] in {"held", "approved"}
-    if capture_authorization and payment["status"] == "held":
-        with db_session() as db:
-            update_status(db, payment_id, "approved", "payment.merchant_approved", {"rail": settings.rail_provider})
+        capture_authorization = payment["verdict"] == "Growl" and status in {"held", "approved"}
+        if capture_authorization:
+            # Compare-and-swap, so two clicks (or two browser tabs) cannot both capture the same authorization.
+            claimed = db.execute("UPDATE payments SET status='approved', updated_at=? WHERE id=? AND status=? AND updated_at=?",
+                                 (utc_now(), payment_id, status, payment["updated_at"]))
+            if claimed.rowcount != 1:
+                raise HTTPException(409, "Capture is already in progress for this payment.")
+            add_event(db, payment_id, "payment.merchant_approved", status, "approved", {"rail": settings.rail_provider})
     try:
         rail = get_rail()
         if payment["verdict"] == "Growl" and not capture_authorization:
@@ -204,9 +344,15 @@ async def approve_payment(payment_id: str):
             result = await rail.capture(payment)
             new_status = "captured"
     except Exception as exc:
+        logger.warning("Approve failed for payment %s (%s)", payment_id, type(exc).__name__)
         with db_session() as db:
-            update_status(db, payment_id, "failed", "rail.approve_failed", {"error": str(exc)[:200]})
-        raise HTTPException(502, "Payment rail approval/capture failed. Check sandbox order approval and server logs.") from exc
+            if capture_authorization:
+                # The authorization is still open at the provider, so put the payment back to "held":
+                # the merchant can retry the capture or void it instead of being stuck.
+                update_status(db, payment_id, "held", "rail.capture_failed", {"error": str(exc)[:200]})
+            else:
+                update_status(db, payment_id, "failed", "rail.approve_failed", {"error": str(exc)[:200]})
+        raise HTTPException(502, "Payment rail approval/capture failed. The payment was left in a state you can retry or void. Check server logs.") from exc
     with db_session() as db:
         if result.get("authorization_id"):
             db.execute("UPDATE payments SET provider_authorization_id=? WHERE id=?", (result["authorization_id"], payment_id))
@@ -219,18 +365,21 @@ async def approve_payment(payment_id: str):
             update_status(db, payment_id, new_status, "payment.authorized", details)
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
-@app.post("/v1/payments/{payment_id}/void")
-async def void_payment(payment_id: str):
+@app.post("/v1/payments/{payment_id}/void", dependencies=[Depends(require_admin)])
+async def void_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
     with db_session() as db:
-        row = db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        row = db.execute("SELECT * FROM payments WHERE id=? AND merchant_id=?", (payment_id, merchant_id)).fetchone()
         if not row:
             raise HTTPException(404, "Payment not found.")
         payment = dict(row)
-        if payment["verdict"] != "Growl" or payment["status"] not in {"held", "approved"}:
-            raise HTTPException(409, "Only authorized Growl payments can be voided.")
+        if payment["verdict"] == "Growl" and payment["status"] == "approved":
+            raise HTTPException(409, "A capture is in progress for this payment, so it cannot be voided right now.")
+        if payment["verdict"] != "Growl" or payment["status"] != "held":
+            raise HTTPException(409, "Only held Growl payments can be voided.")
     try:
         result = await get_rail().void(payment)
     except Exception as exc:
+        logger.warning("Void failed for payment %s (%s)", payment_id, type(exc).__name__)
         raise HTTPException(502, "Payment rail could not void the authorization.") from exc
     with db_session() as db:
         update_status(db, payment_id, "voided", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
@@ -266,10 +415,15 @@ def paypal_cancel(token: str | None = None):
 
 @app.post("/webhooks/paypal")
 async def paypal_webhook(request: Request):
-    payload = await request.json()
     # TODO: Verify the header set and verification endpoint against current PayPal webhook docs before production use.
     if settings.rail_provider != "paypal" or not settings.paypal_webhook_id:
         raise HTTPException(503, "PayPal webhook verification is not configured.")
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Webhook body must be JSON.")
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Webhook body must be a JSON object.")
     headers = {
         "auth_algo": request.headers.get("paypal-auth-algo", ""),
         "cert_url": request.headers.get("paypal-cert-url", ""),
@@ -289,15 +443,19 @@ async def paypal_webhook(request: Request):
     if not event_id:
         raise HTTPException(400, "Webhook event ID is required.")
     resource = payload.get("resource") or {}
-    related = resource.get("supplementary_data", {}).get("related_ids", {})
-    order_id = related.get("order_id") or resource.get("id")
+    related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+    # A webhook can name the order, the authorization or the capture; match a payment on any of them.
+    ids = [i for i in {related.get("order_id"), related.get("authorization_id"), resource.get("id")} if i]
     with db_session() as db:
         try:
             db.execute("INSERT INTO webhook_events(event_id, received_at) VALUES(?,datetime('now'))", (event_id,))
-        except Exception:
+        except sqlite3.IntegrityError:
             return {"received": True, "duplicate": True}
-        row = db.execute("SELECT * FROM payments WHERE provider_order_id=? OR provider_capture_id=?",
-                         (order_id, order_id)).fetchone()
+        row = None
+        if ids:
+            marks = ",".join("?" * len(ids))
+            row = db.execute(f"SELECT * FROM payments WHERE provider_order_id IN ({marks}) OR provider_capture_id IN ({marks}) "
+                             f"OR provider_authorization_id IN ({marks})", ids * 3).fetchone()
         if not row:
             return {"received": True, "matched": False}
         payment_id, old_status = row["id"], row["status"]

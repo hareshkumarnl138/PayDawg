@@ -3,8 +3,26 @@ const notice = document.getElementById("notice");
 let allPayments = [];
 let known = null, pulseId = null, lastSig = "";
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"Content-Type": "application/json", ...(options.headers || {})}, ...options});
+let adminToken = "";
+try { adminToken = sessionStorage.getItem("paydawgAdminToken") || ""; } catch (e) {}
+let tokenDeclined = false;
+async function api(path, options = {}, retried = false) {
+  const headers = {"Content-Type": "application/json", ...(options.headers || {})};
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  const response = await fetch(path, {...options, headers});
+  if (response.status === 401 && !retried && !tokenDeclined) {
+    // The server was started with ADMIN_TOKEN, so the merchant console needs it.
+    const entered = window.prompt("This console is protected. Enter the admin token:");
+    if (entered) {
+      adminToken = entered.trim();
+      try { sessionStorage.setItem("paydawgAdminToken", adminToken); } catch (e) {}
+      return api(path, options, true);
+    }
+    tokenDeclined = true;
+  } else if (response.status === 401 && retried) {
+    adminToken = ""; tokenDeclined = true;  // wrong token: stop asking until the Refresh button is pressed
+    try { sessionStorage.removeItem("paydawgAdminToken"); } catch (e) {}
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.detail || "Request failed");
@@ -27,7 +45,12 @@ async function load() {
     document.getElementById("railBadge").textContent = health.simulated ? "SIMULATED · MOCK RAIL" : "PAYPAL SANDBOX";
     const shop = document.getElementById("shop");
     if (shop) shop.hidden = !health.simulated;
-    try { const rl = await api("/v1/rate-limit"); if (rl.locked && window.Dawg) window.Dawg.lock(rl.retry_after, rl.lock_seconds); } catch (e) {}
+    try {
+      const rl = await api("/v1/rate-limit");
+      // Tiredness follows the server's own counter, so payments sent by scripts tire him too.
+      window.rlRemaining = rl.enabled ? Math.max(0, rl.limit - rl.recent) : -1;
+      if (rl.locked && window.Dawg) window.Dawg.lock(rl.retry_after, rl.lock_seconds);
+    } catch (e) {}
     allPayments = (await api("/v1/payments")).payments || [];
     document.getElementById("totalCount").textContent = allPayments.length;
     document.getElementById("wagCount").textContent = allPayments.filter(p => p.verdict === "Wag").length;
@@ -62,7 +85,7 @@ function render() {
   }
   body.innerHTML = rows.map(p => {
     const reasons = (p.reasons || []).map(escapeHtml).join(" ");
-    const held = ["held","approved"].includes(p.status) && p.verdict === "Growl";
+    const held = p.status === "held" && p.verdict === "Growl";
     const approval = p.approval_url ? '<br><a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(p.approval_url) + '">Buyer approval ↗</a>' : "";
     return '<tr data-id="' + escapeHtml(p.id) + '">' +
       '<td><span class="payment-id">' + escapeHtml(p.id.slice(0,8)) + '</span><br><small>' + escapeHtml(new Date(p.created_at).toLocaleString()) + '</small></td>' +
@@ -95,7 +118,7 @@ async function showDetails(id) {
   try { document.getElementById("details").textContent = JSON.stringify(await api("/v1/payments/" + id), null, 2); }
   catch (error) { document.getElementById("details").textContent = error.message; }
 }
-document.getElementById("refreshBtn").addEventListener("click", () => { lastSig = ""; load(); });
+document.getElementById("refreshBtn").addEventListener("click", () => { lastSig = ""; tokenDeclined = false; load(); });
 document.getElementById("filter").addEventListener("change", render);
 load();
-setInterval(() => { if (!document.hidden) load(); }, 3000);
+setInterval(() => { if (!document.hidden && !tokenDeclined) load(); }, 3000);
