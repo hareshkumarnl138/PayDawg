@@ -51,7 +51,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS payments (
             id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL REFERENCES merchants(id),
             idempotency_key TEXT, request_hash TEXT NOT NULL, amount REAL NOT NULL,
-            currency TEXT NOT NULL, customer_id TEXT NOT NULL, description TEXT NOT NULL,
+            currency TEXT NOT NULL, customer_id TEXT NOT NULL, description TEXT NOT NULL, order_ref TEXT,
             verdict TEXT NOT NULL, risk_level TEXT NOT NULL, reasons_json TEXT NOT NULL,
             flags_json TEXT NOT NULL, decision_source TEXT NOT NULL, status TEXT NOT NULL,
             rail TEXT NOT NULL, provider_order_id TEXT, provider_authorization_id TEXT, provider_capture_id TEXT,
@@ -69,6 +69,8 @@ def init_db():
             event_id TEXT PRIMARY KEY, received_at TEXT NOT NULL
         );
         """)
+        if "order_ref" not in {r["name"] for r in db.execute("PRAGMA table_info(payments)").fetchall()}:
+            db.execute("ALTER TABLE payments ADD COLUMN order_ref TEXT")
         db.execute("INSERT OR IGNORE INTO merchants(id, name, created_at) VALUES(?,?,?)",
                    ("demo-merchant", "PayDawg Demo Shop", utc_now()))
         db.execute("INSERT OR IGNORE INTO notebook(merchant_id, updated_at) VALUES(?,?)",

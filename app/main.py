@@ -4,13 +4,14 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured
+from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data
 from app.models import PaymentCreate
 from app.engine import decide
+from app.ratelimit import limiter, client_key
 from app.rails.base import RailError
 from app.rails.mock import MockRail
 from app.rails.paypal import PayPalRail
@@ -29,6 +30,7 @@ def get_rail():
 @app.on_event("startup")
 def startup():
     init_db()
+    limiter.reset()
 
 async def settle_buyer_approval(payment: dict, success_event: str, failure_event: str) -> str:
     """Run the rail step that follows buyer approval: Growl -> authorize (held), Wag -> capture.
@@ -66,13 +68,36 @@ async def settle_buyer_approval(payment: dict, success_event: str, failure_event
 def dashboard():
     return FileResponse(DASHBOARD / "index.html")
 
+@app.get("/v1/rate-limit")
+def rate_limit_status(request: Request):
+    """Is this client currently locked out? The dashboard polls this so the Dawg can sleep on cue."""
+    return limiter.status(client_key(request))
+
+@app.post("/v1/demo/reset")
+def demo_reset():
+    """Mock mode only: wipe demo payments and the Notebook (same as demo_shop/reset_demo.py)."""
+    if settings.rail_provider != "mock":
+        raise HTTPException(403, "Demo reset is only available when PAYPAL_MODE=mock.")
+    reset_demo_data()
+    limiter.reset()
+    return {"ok": True}
+
 @app.get("/health")
 def health():
     return {"ok": True, "rail": settings.rail_provider, "llm": settings.llm_provider,
             "simulated": settings.rail_provider == "mock"}
 
 @app.post("/v1/payments")
-async def create_payment(body: PaymentCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+async def create_payment(body: PaymentCreate, request: Request, response: Response,
+                         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    allowed, retry_after, remaining = limiter.hit(client_key(request))
+    if not allowed:
+        raise HTTPException(429, f"Too many requests. Dawg is resting, try again in {retry_after} seconds.",
+                            headers={"Retry-After": str(retry_after), "X-RateLimit-Limit": str(settings.rate_limit_attempts),
+                                     "X-RateLimit-Remaining": "0"})
+    if remaining >= 0:
+        response.headers["X-RateLimit-Limit"] = str(settings.rate_limit_attempts)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
     if settings.rail_provider == "paypal" and (not settings.paypal_client_id or not settings.paypal_client_secret):
         raise HTTPException(503, "PayPal sandbox credentials are not configured.")
     request_data = body.model_dump()
@@ -92,7 +117,7 @@ async def create_payment(body: PaymentCreate, idempotency_key: str | None = Head
         notebook_row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (body.merchant_id,)).fetchone()
         notebook = dict(notebook_row) if notebook_row else {}
         recent = [dict(row) for row in db.execute(
-            "SELECT merchant_id, amount, customer_id, created_at, status FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100",
+            "SELECT merchant_id, amount, customer_id, order_ref, created_at, status FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100",
             (body.merchant_id,)).fetchall()]
         pid = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
@@ -100,10 +125,10 @@ async def create_payment(body: PaymentCreate, idempotency_key: str | None = Head
         decision = await decide(payment, notebook, recent)
         status = "blocked" if decision["verdict"] == "Bark" else "screened"
         db.execute("""INSERT INTO payments
-            (id,merchant_id,idempotency_key,request_hash,amount,currency,customer_id,description,verdict,risk_level,reasons_json,flags_json,decision_source,status,rail,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (id,merchant_id,idempotency_key,request_hash,amount,currency,customer_id,description,order_ref,verdict,risk_level,reasons_json,flags_json,decision_source,status,rail,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (pid, body.merchant_id, key, request_hash, body.amount, body.currency.upper(), body.customer_id,
-             body.description, decision["verdict"], decision["risk_level"], json.dumps(decision["reasons"]),
+             body.description, (body.order_ref or "").strip() or None, decision["verdict"], decision["risk_level"], json.dumps(decision["reasons"]),
              json.dumps(decision["flags"]), decision["decision_source"], "created", settings.rail_provider, created_at, created_at))
         add_event(db, pid, "payment.created", None, "created", {"amount": body.amount, "currency": body.currency.upper()})
         update_status(db, pid, status, "payment.screened",

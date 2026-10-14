@@ -22,7 +22,7 @@ async def decide(payment: dict, notebook: dict, recent_payments: list[dict]) -> 
     if not reasons:
         reasons = ["No additional risk reasons were supplied."]
     return {"verdict": verdict, "risk_level": level, "reasons": reasons,
-            "flags": rules["flags"], "hard_block": rules["hard_block"], "decision_source": source}
+            "flags": rules["flags"], "risk_score": rules["risk_score"], "hard_block": rules["hard_block"], "decision_source": source}
 
 async def decide_payment(payment, notebook, recent_payments):
     return await decide(payment, notebook, recent_payments)

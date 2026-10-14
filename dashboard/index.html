@@ -1,14 +1,37 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PayDawg — Payment Monitor</title><link rel="stylesheet" href="/dashboard/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PayDawg — Payment Monitor</title><link rel="stylesheet" href="/dashboard/style.css"><link rel="stylesheet" href="/dashboard/dawg.css"></head>
 <body>
-<header class="topbar"><div class="brand"><span class="brand-mark">PD</span><div><h1>PayDawg</h1><p>Payment risk monitor</p></div></div><div class="top-right"><span id="railBadge" class="badge">Loading mode…</span><button id="refreshBtn" class="secondary">Refresh</button></div></header>
+<header class="topbar"><div class="brand"><span class="brand-mark" data-dawg="38" data-mood="idle" aria-label="PayDawg"></span><div><h1>PayDawg</h1><p>Payment risk monitor</p></div></div><div class="top-right"><span id="railBadge" class="badge">Loading mode…</span><button id="refreshBtn" class="secondary">Refresh</button></div></header>
 <main class="wrap">
 <section class="intro"><div><p class="eyebrow">MERCHANT CONSOLE</p><h2>Every payment has a signal.</h2><p class="muted">Screen payments, review risk reasons, and inspect the event trail.</p></div><a class="docs" href="/docs">API docs ↗</a></section>
+<section id="shop" class="panel" hidden>
+<div class="panel-head"><div><h3>Demo shop</h3><p class="muted">Sends real POST /v1/payments requests to this API · mock mode only</p></div><button id="shopReset" class="secondary" type="button">Reset demo</button></div>
+<div class="body"><form id="shopForm" autocomplete="off">
+<div class="row">
+<div><label for="shopAmount">Amount</label><input id="shopAmount" type="number" min="0.01" max="1000000" step="0.01" value="18" required></div>
+<div><label for="shopCurrency">Currency</label><input id="shopCurrency" value="USD" maxlength="3" required></div>
+<div><label for="shopCustomer">Customer ID</label><input id="shopCustomer" value="demo-customer-01" required></div>
+<div><label for="shopDesc">Description</label><input id="shopDesc" value="Demo purchase"></div>
+<div><label for="shopOrder">Order ref (optional)</label><input id="shopOrder" placeholder="e.g. order-1001"></div>
+</div><button id="shopSend" class="primary" type="submit">Send payment</button></form>
+<p class="sub">Scenarios</p>
+<div class="chips" id="shopScenarios">
+<button type="button" data-sc="normal">Normal purchase</button>
+<button type="button" data-sc="again">Buy it again (new order ref)</button>
+<button type="button" data-sc="bulk">Buy 4 at once (72)</button>
+<button type="button" data-sc="four">Buy 4 separately</button>
+<button type="button" data-sc="dbl">Double-click (same order)</button>
+<button type="button" data-sc="large">Large amount, new customer</button>
+<button type="button" data-sc="rapid">One customer x6 fast</button>
+<button type="button" data-sc="burst">Card-testing burst x17</button>
+<button type="button" data-sc="hammer">Hammer the API (wake the Dawg up)</button>
+<button type="button" data-sc="demo">Run the 3-payment demo</button>
+</div></div><div id="shopNote" role="status"></div></section>
 <section class="metrics"><article><span>Total payments</span><strong id="totalCount">—</strong></article><article><span>Wag · low risk</span><strong id="wagCount">—</strong></article><article><span>Growl · review</span><strong id="growlCount">—</strong></article><article><span>Bark · blocked</span><strong id="barkCount">—</strong></article></section>
 <section class="panel"><div class="panel-head"><div><h3>Payments</h3><p class="muted">Newest first · mock mode is SIMULATED</p></div><select id="filter"><option value="all">All verdicts</option><option>Wag</option><option>Growl</option><option>Bark</option></select></div>
 <div class="table-wrap"><table><thead><tr><th>Payment</th><th>Customer</th><th>Amount</th><th>Verdict</th><th>Status</th><th>Risk reasons</th><th>Actions</th></tr></thead><tbody id="paymentsBody"><tr><td colspan="7" class="empty">Loading payments…</td></tr></tbody></table></div><p id="notice" class="notice" role="status"></p></section>
 <section class="panel"><div class="panel-head"><div><h3>Payment details</h3><p class="muted">Select a payment row to view its event history.</p></div></div><pre id="details" class="details">Choose a payment to inspect its event trail.</pre></section>
 <footer>PayDawg MVP · Sandbox/mock only · Not a production fraud decision system</footer>
-</main><script src="/dashboard/app.js"></script>
+</main><script src="/dashboard/dawg.js"></script><script src="/dashboard/app.js"></script><script src="/dashboard/demoshop.js"></script>
 </body></html>

@@ -1,0 +1,87 @@
+.brand-mark{overflow:hidden;background:#11182b!important;border:1px solid #34415f}
+.dawg{display:block;overflow:visible}
+.dawg .e,.dawg .m,.dawg .burst,.dawg .blush{display:none}
+.mood-idle .e-idle,.mood-idle .m-idle,.mood-wag .e-wag,.mood-wag .m-wag,.mood-wag .blush,.mood-growl .e-growl,.mood-growl .m-growl,.mood-bark .e-bark,.mood-bark .m-bark,.mood-bark .burst{display:inline}
+.ear{transform-box:fill-box;transform-origin:50% 100%;transition:transform .25s}
+.mood-growl .ear.l{transform:rotate(-26deg)}.mood-growl .ear.r{transform:rotate(26deg)}
+.mood-bark .ear.l{transform:rotate(-8deg)}.mood-bark .ear.r{transform:rotate(8deg)}
+.tail{transform-origin:138px 190px;animation:wagt 1.8s ease-in-out infinite}
+.mood-wag .tail{animation-duration:.32s}
+.mood-growl .tail,.mood-bark .tail{animation:none;transform:rotate(-22deg)}
+@keyframes wagt{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(16deg)}}
+.blink{transform-box:fill-box;transform-origin:center;animation:blink 4.2s infinite}
+@keyframes blink{0%,94%,100%{transform:scaleY(1)}97%{transform:scaleY(.1)}}
+.mood-growl .dg{animation:trem .09s linear infinite}
+.mood-bark .dg{animation:shk .12s linear 8}
+@keyframes trem{0%,100%{transform:translateX(-.6px)}50%{transform:translateX(.6px)}}
+@keyframes shk{0%,100%{transform:translate(0,0)}25%{transform:translate(-3px,-2px)}75%{transform:translate(3px,1px)}}
+.dawg.talking .m{transform-box:fill-box;transform-origin:50% 0;animation:talk .2s ease-in-out infinite}
+@keyframes talk{50%{transform:scaleY(.5)}}
+#dawgbox{position:fixed;right:clamp(10px,2vw,26px);bottom:10px;z-index:20;width:min(290px,calc(100vw - 20px));display:flex;flex-direction:column;align-items:flex-end;gap:6px;pointer-events:none}
+#dawgbox>*{pointer-events:auto}
+#bubble{position:relative;background:#edf1f7;color:#0b1020;border-radius:16px;padding:11px 14px;font-size:13px;line-height:1.45;min-height:44px;width:100%;border:3px solid #8bd5ff;box-shadow:0 10px 30px #0008}
+#bubble:after{content:"";position:absolute;right:56px;bottom:-14px;border:8px solid transparent;border-top-color:#edf1f7}
+#bubble.wag{border-color:#83e4c6}#bubble.growl{border-color:#ffd58b}#bubble.bark{border-color:#ff9db0}
+#dawgFig{cursor:pointer;filter:drop-shadow(0 8px 14px #0009);margin-right:12px}
+.dctrl{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dctrl button{font-size:11px;padding:6px 9px;background:#11182bee}
+body{padding-bottom:300px}
+@media(max-width:520px){#dawgFig svg{width:120px;height:126px}}
+
+#dawgbox{transform:translate(var(--dx,0px),var(--dy,0px));transition:transform .9s cubic-bezier(.25,1.25,.5,1)}
+#dawgbox.dragging{transition:none}
+#dawgFig{touch-action:none;cursor:grab;user-select:none}
+#dawgbox.dragging #dawgFig{cursor:grabbing}
+#dawgFig.walk{animation:hop .3s ease-in-out infinite}
+@keyframes hop{50%{transform:translateY(-8px)}}
+.mood-idle .dg{transform-origin:100px 205px;animation:tilt 9s ease-in-out infinite}
+@keyframes tilt{0%,78%,100%{transform:rotate(0)}84%{transform:rotate(-4deg)}92%{transform:rotate(3deg)}}
+.glow{animation:glow 1s ease-in-out infinite;border-color:#ffd58b!important}
+@keyframes glow{50%{box-shadow:0 0 0 4px #ffd58b55,0 0 16px #ffd58b88}}
+@media(prefers-reduced-motion:reduce){#dawgbox{transition:none}#dawgFig.walk,.glow,.mood-idle .dg,.tail{animation:none}}
+
+.dawg .sweat,.dawg .zzz{display:none}
+.mood-tired .e-tired,.mood-tired .m-tired,.mood-tired .sweat,.mood-sleep .e-sleep,.mood-sleep .m-sleep,.mood-sleep .zzz{display:inline}
+.mood-tired .ear.l,.mood-sleep .ear.l{transform:rotate(-48deg)}.mood-tired .ear.r,.mood-sleep .ear.r{transform:rotate(48deg)}
+.mood-tired .tail,.mood-sleep .tail{animation:none;transform:rotate(10deg)}
+.mood-tired .dg{transform-origin:100px 205px;animation:pant .7s ease-in-out infinite}
+@keyframes pant{50%{transform:scaleY(1.025)}}
+.mood-sleep .dg{transform-origin:100px 205px;animation:breathe 3.2s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.02,1.035)}}
+.zzz text{animation:floatz 2.4s ease-in-out infinite}.zzz text:nth-child(2){animation-delay:.5s}.zzz text:nth-child(3){animation-delay:1s}
+@keyframes floatz{0%{opacity:0;transform:translateY(8px)}30%,70%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
+#lock{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#060a16e6;backdrop-filter:blur(3px);animation:fadein .35s;overflow:auto}
+#lock[hidden]{display:none}
+@keyframes fadein{from{opacity:0}}
+.lockcard{text-align:center;padding:16px;max-width:460px;width:100%}
+.ropes{display:block;margin:0 auto -4px}
+.board{position:relative;z-index:2;width:min(380px,86vw);margin:0 auto;padding:20px 16px 14px;border:3px solid #5a3612;border-radius:8px;background:repeating-linear-gradient(180deg,#b9813a 0 58px,#5f3a14 58px 61px),#a8702c;box-shadow:inset 0 0 22px #0007,0 12px 26px #000b;transform-origin:50% 0;animation:swing 3.4s ease-in-out infinite alternate}
+@keyframes swing{from{transform:rotate(-2.2deg)}to{transform:rotate(2.2deg)}}
+.board b{display:block;font:900 15px/1 "Arial Black",Impact,sans-serif;letter-spacing:.38em;color:#3a2208;text-shadow:0 1px 0 #e0b06b;margin-bottom:6px}
+.board strong{display:block;font:900 clamp(40px,12vw,58px)/1 Impact,"Arial Black",sans-serif;letter-spacing:.05em;color:#2e1a06;text-shadow:0 2px 0 #e7bb78,0 -1px 0 #0003}
+.board small{display:block;margin-top:8px;font:700 11px/1 ui-monospace,monospace;color:#3a2208;opacity:.85}
+.nail{position:absolute;top:8px;width:10px;height:10px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e8e8e8,#6d6d6d);box-shadow:0 1px 2px #0008}
+.nail.l{left:10px}.nail.r{right:10px}
+#lockDog{position:relative;z-index:1;margin-top:-34px;display:flex;justify-content:center}
+.lockmeta{margin:6px 0 4px;color:#ffb6c3;font-size:13px;font-weight:700;letter-spacing:.04em}
+.lockquote{margin:6px auto 0;min-height:3.4em;max-width:400px;color:#edf1f7;font-size:16px;line-height:1.45;font-style:italic}
+.lockquote.pop{animation:qin .45s}
+@keyframes qin{from{opacity:0;transform:translateY(6px)}}
+.lockbar{height:6px;background:#1c2742;border-radius:9px;overflow:hidden;margin:14px auto 0;max-width:340px}
+.lockbar i{display:block;height:100%;width:100%;background:#8bd5ff;transition:width .25s linear}
+@media(prefers-reduced-motion:reduce){.board,.zzz text,.mood-sleep .dg,.mood-tired .dg{animation:none}}
+
+/* ---- demo shop panel ---- */
+#shop input,#shop select{width:100%;background:#17213a;border:1px solid #34415f;border-radius:10px;color:#eaf0fb;padding:10px 12px;font:inherit;font-size:14px}
+#shop input:focus,#shop button:focus-visible{outline:2px solid #8bd5ff;outline-offset:1px}
+#shop label{display:block;font-size:12px;color:#9ba9c3;margin-bottom:6px}
+#shop .body{padding:18px 22px}
+#shop .row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:12px}
+#shop .chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 0}
+#shop .chips button{font-size:12px;padding:8px 10px}
+#shop .primary{background:#8bd5ff;color:#081120;font-weight:750;border-color:#8bd5ff}
+#shop .sub{font-size:12px;color:#7f8eaa;margin:14px 0 8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+#shop button:disabled{opacity:.5;cursor:wait}
+#shopNote{padding:12px 22px;border-top:1px solid #202b43;color:#a8e8d0;font-size:13px;min-height:44px}
+#shopNote.err{color:#ffb6c3}
+@media(max-width:900px){#shop .row{grid-template-columns:repeat(2,minmax(0,1fr))}}

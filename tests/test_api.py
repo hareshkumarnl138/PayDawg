@@ -84,3 +84,16 @@ def test_event_trail_is_returned(client):
     result = client.post('/v1/payments', json={'amount':10,'customer_id':'a'}).json()
     detail = client.get('/v1/payments/' + result['id']).json()
     assert len(detail['events']) >= 2
+
+def test_repeat_purchase_with_new_order_ref_is_allowed_through_api(client):
+    first = client.post('/v1/payments', json={'amount':18,'customer_id':'buyer','order_ref':'order-1'}).json()
+    second = client.post('/v1/payments', json={'amount':18,'customer_id':'buyer','order_ref':'order-2'}).json()
+    assert first['verdict'] == 'Wag'
+    assert second['verdict'] == 'Wag'
+    assert second['order_ref'] == 'order-2'
+
+def test_same_order_ref_is_blocked_through_api(client):
+    body = {'amount':18,'customer_id':'buyer','order_ref':'order-1'}
+    client.post('/v1/payments', json=body, headers={'Idempotency-Key':'k1'})
+    again = client.post('/v1/payments', json=body, headers={'Idempotency-Key':'k2'}).json()
+    assert again['verdict'] == 'Bark'
