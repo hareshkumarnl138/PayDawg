@@ -13,11 +13,12 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data
 from app.models import PaymentCreate, utc_now
+from app.pages import result_page
 from app.engine import decide
 from app.ratelimit import limiter, client_key
 from app.rails.base import RailError
@@ -385,32 +386,49 @@ async def void_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
         update_status(db, payment_id, "voided", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
+def wants_html(request: Request) -> bool:
+    """A buyer's browser asks for text/html; API clients and tests get the JSON they always did."""
+    return "text/html" in request.headers.get("accept", "")
+
+
 @app.get("/paypal/return")
-async def paypal_return(token: str):
-    """Handle PayPal's buyer redirect after approval of a sandbox order."""
+async def paypal_return(request: Request, token: str):
+    """Handle PayPal's buyer redirect after approval of a sandbox order.
+    Browsers get a small Dawg page; everything else gets JSON."""
+    html = wants_html(request)
     with db_session() as db:
         row = db.execute("SELECT * FROM payments WHERE provider_order_id=?", (token,)).fetchone()
         if not row:
+            if html:
+                return HTMLResponse(result_page("notfound"), status_code=404)
             raise HTTPException(404, "PayPal order was not found.")
         payment = dict(row)
         if payment["status"] not in {"screened"}:
+            if html:
+                outcome = payment["status"] if payment["status"] in {"captured", "held"} else "processed"
+                return HTMLResponse(result_page(outcome, payment))
             return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
     try:
         status = await settle_buyer_approval(payment, "paypal.buyer_approved", "paypal.return_failed")
     except Exception as exc:
+        if html:
+            return HTMLResponse(result_page("error", payment), status_code=502)
         raise HTTPException(502, "PayPal buyer approval was received, but the payment operation failed.") from exc
+    if html:
+        return HTMLResponse(result_page("held" if status == "held" else "captured", payment))
     return {"payment_id": payment["id"], "status": status, "verdict": payment["verdict"],
             "message": "Authorization held for merchant review." if status == "held" else "Payment captured."}
 
 @app.get("/paypal/cancel")
-def paypal_cancel(token: str | None = None):
+def paypal_cancel(request: Request, token: str | None = None):
     """Record a buyer-cancelled PayPal checkout without attempting capture."""
-    if not token:
-        return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
-    with db_session() as db:
-        row = db.execute("SELECT id FROM payments WHERE provider_order_id=?", (token,)).fetchone()
-        if row:
-            update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
+    if token:
+        with db_session() as db:
+            row = db.execute("SELECT id FROM payments WHERE provider_order_id=?", (token,)).fetchone()
+            if row:
+                update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
+    if wants_html(request):
+        return HTMLResponse(result_page("cancelled"))
     return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
 
 @app.post("/webhooks/paypal")

@@ -28,6 +28,8 @@ copy .env.example .env
 
 On macOS/Linux use `cp .env.example .env`. The default configuration runs without credentials.
 
+**Windows without git:** on GitHub click **Code > Download ZIP**, extract it, and double-click `start.bat`. It creates the virtual environment, installs the requirements, copies `.env.example` to `.env` and starts the server (needs Python 3.11+ installed).
+
 ## Run mock mode
 
 Keep `PAYPAL_MODE=mock` in `.env`, then run:
@@ -80,15 +82,29 @@ python demo_shop/send_demo.py
 
 Tests use a temporary SQLite database and mock rail; they do not contact PayPal or an LLM.
 
-## PayPal Sandbox
+## PayPal Sandbox (the real thing)
 
-1. Create a REST app in the PayPal Developer Dashboard's Sandbox.
-2. Put its sandbox client ID and secret in `.env`; never commit credentials.
-3. Set `PAYPAL_MODE=paypal` and retain `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`.
-4. Configure the sandbox webhook ID if testing webhooks.
-5. Create an order and follow its buyer approval URL before attempting an operation requiring buyer approval.
+Everything above runs in mock mode. To drive PayPal's real sandbox:
 
-**TODO before relying on live sandbox lifecycle paths:** verify current PayPal Orders v2 authorization, capture, void, refund, and webhook signature verification requirements against official developer docs. Manually test the entire sandbox lifecycle. This MVP is not production-ready.
+1. On developer.paypal.com, open **Apps & Credentials** with **Sandbox** selected, create an app, and copy its Client ID and Secret.
+2. In `.env` set `PAYPAL_MODE=paypal`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, keep `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`, and set an `ADMIN_TOKEN` (without one the server starts but warns that anyone who can reach it can capture or void payments). Never commit credentials.
+3. Restart the server, then in a second terminal (same `ADMIN_TOKEN` in that terminal):
+
+```bash
+python demo_shop/paypal_check.py wag     # small payment -> Wag, you approve it in the browser, it is captured
+python demo_shop/paypal_check.py growl   # big payment from a new customer -> Growl, held; you choose capture or void
+python demo_shop/paypal_check.py bark    # same order twice -> Bark, blocked before PayPal
+```
+
+The script prints PayPal's approval link. Open it, log in with a **sandbox buyer** account (Testing Tools > Sandbox Accounts), approve, and PayPal sends the buyer back to `PUBLIC_BASE_URL/paypal/return`, which shows Dawg's result page. Use **USD**: sandbox accounts usually cannot take INR.
+
+**What the buyer sees.** `/paypal/return` and `/paypal/cancel` render a small Dawg page in a browser (Wag: charged; Growl: held for the shop; cancel: nothing charged; unknown link; failed last step). Scripts and API clients still get JSON. The page never shows screening reasons or risk scores.
+
+**Checked against PayPal's docs** (Orders v2): create order with `PayPal-Request-Id`, authorize after buyer approval, capture of an authorization or an approved order, void, refund, and the webhook-verification request fields. The adapter asks for PayPal's full response (`Prefer: return=representation`) because the default minimal reply may omit the authorization details. Our requests are verified against a fake PayPal in `tests/test_paypal_rail.py`; whether PayPal's real servers accept them is what `paypal_check.py` is for.
+
+Webhooks (optional): create a sandbox webhook pointing at `PUBLIC_BASE_URL/webhooks/paypal` (needs a public https address, for example a tunnel), and set `PAYPAL_WEBHOOK_ID`. The Capture and Void buttons do not depend on webhooks.
+
+This is a hackathon MVP, not production software.
 
 ## Deploying it
 
@@ -106,7 +122,7 @@ Tests use a temporary SQLite database and mock rail; they do not contact PayPal 
 
 ## Known limits
 
-Single-tenant console: `ADMIN_TOKEN` is one operator credential, not a per-merchant login. The read and action endpoints take a `merchant_id` (default `demo-merchant`) so shops do not see each other by accident, but anyone holding the token can pass any merchant id. Behind a reverse proxy the rate limit uses the IP uvicorn reports, so run it with `--proxy-headers` and a trusted `--forwarded-allow-ips`, or a client can hide behind a spoofed `X-Forwarded-For`. Velocity is keyed on `customer_id`, which a caller controls, so it slows a repeat customer rather than a determined attacker; the shop-wide surge rule is what catches a spread-out burst. Not production software. Money is stored as floating-point numbers (fine for two-decimal currencies; zero-decimal currencies such as JPY are untested). The rate limiter and idempotency checks are per process. The PayPal sandbox authorize, capture and void flow and webhook verification are written from the docs but have not been run against PayPal yet.
+Single-tenant console: `ADMIN_TOKEN` is one operator credential, not a per-merchant login. The read and action endpoints take a `merchant_id` (default `demo-merchant`) so shops do not see each other by accident, but anyone holding the token can pass any merchant id. Behind a reverse proxy the rate limit uses the IP uvicorn reports, so run it with `--proxy-headers` and a trusted `--forwarded-allow-ips`, or a client can hide behind a spoofed `X-Forwarded-For`. Velocity is keyed on `customer_id`, which a caller controls, so it slows a repeat customer rather than a determined attacker; the shop-wide surge rule is what catches a spread-out burst. Not production software. Money is stored as floating-point numbers (fine for two-decimal currencies; zero-decimal currencies such as JPY are untested). The rate limiter and idempotency checks are per process. The PayPal sandbox authorize, capture and void flow and webhook verification follow PayPal's current docs and are tested against a fake PayPal, but have not yet been run against PayPal's real sandbox: run `demo_shop/paypal_check.py` to do that.
 
 ## Environment
 
