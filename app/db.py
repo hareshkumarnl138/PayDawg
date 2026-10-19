@@ -2,9 +2,11 @@
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from app.config import settings
 from app.models import utc_now
+from app import notebook as nb
 
 def connect():
     conn = sqlite3.connect(settings.database_path, timeout=10)
@@ -23,6 +25,17 @@ def db_session():
         raise
     finally:
         conn.close()
+
+NOTEBOOK_LEARNING_COLUMNS = {
+    "hour_counts": "TEXT NOT NULL DEFAULT '[]'",
+    "pace_peak": "REAL NOT NULL DEFAULT 0",
+    "pace_window": "INTEGER NOT NULL DEFAULT 0",
+    "pace_count": "INTEGER NOT NULL DEFAULT 0",
+    "seeded_payments": "INTEGER NOT NULL DEFAULT 0",
+}
+NOTEBOOK_RESET = ("payment_count=0, average_amount=0, max_amount=0, hour_counts='[]', pace_peak=0, "
+                  "pace_window=0, pace_count=0, seeded_payments=0")
+
 
 def init_db():
     if settings.database_path != ":memory:":
@@ -46,7 +59,10 @@ def init_db():
             average_amount REAL NOT NULL DEFAULT 0,
             max_amount REAL NOT NULL DEFAULT 0,
             active_hours TEXT NOT NULL DEFAULT '[9,10,11,12,13,14,15,16,17,18]',
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            hour_counts TEXT NOT NULL DEFAULT '[]', pace_peak REAL NOT NULL DEFAULT 0,
+            pace_window INTEGER NOT NULL DEFAULT 0, pace_count INTEGER NOT NULL DEFAULT 0,
+            seeded_payments INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS payments (
             id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL REFERENCES merchants(id),
@@ -71,6 +87,11 @@ def init_db():
         """)
         if "order_ref" not in {r["name"] for r in db.execute("PRAGMA table_info(payments)").fetchall()}:
             db.execute("ALTER TABLE payments ADD COLUMN order_ref TEXT")
+        # Notebook columns added when it learned usual hours and pace; older databases get them here.
+        notebook_cols = {r["name"] for r in db.execute("PRAGMA table_info(notebook)").fetchall()}
+        for column, ddl in NOTEBOOK_LEARNING_COLUMNS.items():
+            if column not in notebook_cols:
+                db.execute(f"ALTER TABLE notebook ADD COLUMN {column} {ddl}")
         db.execute("INSERT OR IGNORE INTO merchants(id, name, created_at) VALUES(?,?,?)",
                    ("demo-merchant", "PayDawg Demo Shop", utc_now()))
         db.execute("INSERT OR IGNORE INTO notebook(merchant_id, updated_at) VALUES(?,?)",
@@ -106,7 +127,8 @@ def mark_captured(db, payment_id, event_type, payload=None):
     The Notebook only learns from money that was really captured, so a Growl that is
     held, voided or never approved cannot skew the baseline.
     """
-    row = db.execute("SELECT merchant_id, amount, status, verdict FROM payments WHERE id=?", (payment_id,)).fetchone()
+    row = db.execute("SELECT merchant_id, amount, status, verdict, flags_json, created_at FROM payments WHERE id=?",
+                     (payment_id,)).fetchone()
     if not row:
         return None
     first_capture = row["status"] != "captured"
@@ -116,10 +138,19 @@ def mark_captured(db, payment_id, event_type, payload=None):
         if row["verdict"] == "Growl":
             # A merchant-approved outlier teaches the Notebook only up to the "unusual" limit, so one big
             # approved payment cannot make every later big payment look normal.
-            nb = db.execute("SELECT payment_count, average_amount FROM notebook WHERE merchant_id=?", (row["merchant_id"],)).fetchone()
-            if nb and nb["payment_count"]:
-                learned = min(learned, max(nb["average_amount"], 1.0) * settings.large_amount_multiple)
-        record_notebook_payment(db, row["merchant_id"], learned)
+            book = db.execute("SELECT payment_count, average_amount FROM notebook WHERE merchant_id=?", (row["merchant_id"],)).fetchone()
+            if book and book["payment_count"]:
+                learned = min(learned, max(book["average_amount"], 1.0) * settings.large_amount_multiple)
+        # Pace is the shop's normal flow: a payment that was part of a surge, or captured long after it
+        # arrived (a merchant clearing held payments), does not teach it.
+        try:
+            flags = json.loads(row["flags_json"] or "[]")
+        except ValueError:
+            flags = []
+        now = datetime.now(timezone.utc)
+        arrived = nb.parse_time(row["created_at"]) or now
+        teach_pace = "merchant_surge" not in flags and (now - arrived).total_seconds() <= nb.window_seconds()
+        record_notebook_payment(db, row["merchant_id"], learned, row["created_at"], teach_pace)
     return "captured"
 
 def reset_demo_data():
@@ -131,13 +162,25 @@ def reset_demo_data():
         db.execute("DELETE FROM events")
         db.execute("DELETE FROM webhook_events")
         db.execute("DELETE FROM payments")
-        db.execute("UPDATE notebook SET payment_count=0, average_amount=0, max_amount=0, updated_at=?", (utc_now(),))
+        db.execute(f"UPDATE notebook SET {NOTEBOOK_RESET}, updated_at=?", (utc_now(),))
 
-def record_notebook_payment(db, merchant_id, amount):
-    row = db.execute("SELECT payment_count, average_amount, max_amount FROM notebook WHERE merchant_id=?", (merchant_id,)).fetchone()
+
+def seed_demo_history(merchant_id):
+    """SIMULATED (mock mode only): give one shop's Notebook about two weeks of past trading.
+
+    See notebook.demo_history. Replaces whatever that Notebook had learned; payments are not touched.
+    """
+    values = nb.demo_history(datetime.now(timezone.utc))
+    columns = ", ".join(f"{k}=?" for k in values)
+    with db_session() as db:
+        db.execute(f"UPDATE notebook SET {columns}, updated_at=? WHERE merchant_id=?",
+                   (*values.values(), utc_now(), merchant_id))
+
+
+def record_notebook_payment(db, merchant_id, amount, created_at=None, teach_pace=True):
+    row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (merchant_id,)).fetchone()
     if not row:
         return
-    count = row["payment_count"]
-    avg = ((row["average_amount"] * count) + amount) / (count + 1)
-    db.execute("UPDATE notebook SET payment_count=?, average_amount=?, max_amount=?, updated_at=? WHERE merchant_id=?",
-               (count + 1, avg, max(row["max_amount"], amount), utc_now(), merchant_id))
+    values = nb.learn(dict(row), amount, created_at, datetime.now(timezone.utc), teach_pace)
+    columns = ", ".join(f"{k}=?" for k in values)
+    db.execute(f"UPDATE notebook SET {columns}, updated_at=? WHERE merchant_id=?", (*values.values(), utc_now(), merchant_id))

@@ -57,8 +57,18 @@
     rapid: async () => { const c = who("rapid-buyer"); for (let i = 1; i <= 6; i++) await send(10 + i, c, "Rapid purchase " + i, ref());
       say("One customer, 6 payments in a row. The 6th trips the per-customer velocity limit and is blocked."); },
     burst: async () => {
-      for (let i = 1; i <= 17; i++) { await send(1 + (i % 3), who("bot" + i), "Tiny test payment " + i, ref()); await window.load(); await sleep(1200); }
-      say("17 tiny payments from 17 different customers: a card-testing pattern. Past 15 in 10 minutes, new ones are flagged and held.");
+      let flagged = 0;
+      for (let i = 1; i <= 17; i++) {
+        const p = await send(1 + (i % 3), who("bot" + i), "Tiny test payment " + i, ref());
+        if ((p.flags || []).includes("merchant_surge")) flagged++;
+        await window.load(); await sleep(1200);
+      }
+      let level = 15, floor = 15;
+      try { const nb = await window.api("/v1/notebook"); level = nb.surge_above || level; floor = nb.surge_floor || floor; } catch (e) {}
+      say(flagged
+        ? "17 tiny payments from 17 different customers: a card-testing pattern. Past this shop's surge level (" + level + " in 10 minutes), " + flagged + " were flagged and held."
+        : "17 tiny payments from 17 different customers. This shop has learned it normally handles more than that, so its surge level is " + level +
+          " and nothing was flagged. Press Reset demo to try it on a brand-new shop, where the level starts at " + floor + ".");
     },
     hammer: async () => {
       // Deliberately exceed the per-client rate limit so the Dawg falls asleep behind the sign.

@@ -8,11 +8,14 @@ Hard blocks (the LLM can never override these):
 Soft signals add to a 0-100 risk score (>= 40 means review, i.e. Growl):
   unusual_amount 50, merchant_surge 40, new_customer 20, odd_hour 20, and -20 for a customer
   who already has a captured payment (trusted repeat customer).
+
+"Unusual", "odd hour" and "surge" are judged against what Dawg's Notebook has learned about this shop
+(app/notebook.py), so a busy evening shop is not treated like a quiet 9-to-6 one.
 """
-import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.config import settings
+from app.notebook import surge_limit, unusual_above, usual_hours
 
 WEIGHTS = {"unusual_amount": 50, "merchant_surge": 40, "new_customer": 20, "odd_hour": 20}
 TRUSTED_DISCOUNT = 20
@@ -72,24 +75,20 @@ def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -
         reasons.append(f"Velocity breach: this customer already made {customer_velocity} payments in the last "
                        f"{settings.velocity_window_minutes} minutes.")
     baseline_count = int(notebook.get("payment_count", 0) or 0)
-    average = float(notebook.get("average_amount", 0) or 0)
-    maximum = float(notebook.get("max_amount", 0) or 0)
-    if baseline_count and amount > max(average * settings.large_amount_multiple, maximum * 2, 0):
+    unusual_limit = unusual_above(notebook)
+    if unusual_limit is not None and amount > unusual_limit:
         flags.append("unusual_amount")
         reasons.append("Amount is far above this merchant's recorded payment baseline.")
-    if merchant_velocity >= settings.merchant_surge_limit:
+    surge_at = surge_limit(notebook, now)
+    if merchant_velocity >= surge_at:
         flags.append("merchant_surge")
         reasons.append(f"Merchant surge: {merchant_velocity} payments from the whole shop in the last "
-                       f"{settings.velocity_window_minutes} minutes (possible card-testing burst).")
+                       f"{settings.velocity_window_minutes} minutes, at or above this shop's alert level of {surge_at} "
+                       "(possible card-testing burst).")
     if not customer_seen and baseline_count:
         flags.append("new_customer")
         reasons.append("This customer has not appeared in the merchant's recent payment history.")
-    active_hours = notebook.get("active_hours", "[9,10,11,12,13,14,15,16,17,18]")
-    try:
-        hours = json.loads(active_hours) if isinstance(active_hours, str) else active_hours
-    except (ValueError, TypeError):
-        hours = list(range(9, 19))
-    if now.hour not in hours:
+    if now.hour not in usual_hours(notebook):
         flags.append("odd_hour")
         reasons.append(f"Payment arrived at {now.hour:02d}:00, outside the merchant's usual active hours.")
     hard_block = duplicate or velocity_breach

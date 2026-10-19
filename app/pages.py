@@ -26,12 +26,13 @@ _CSS = (
     "h1{font-size:1.5rem;margin:8px 0 6px}p{margin:0 0 12px;color:var(--muted)}"
     ".ref{font-size:.85rem;color:var(--muted);border-top:1px dashed var(--line);margin-top:16px;padding-top:12px}"
     ".brand{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700}"
+    ".back{display:inline-block;margin-top:14px;color:var(--ink);font-weight:600;text-underline-offset:3px}"
     "[data-dawg]{display:flex;justify-content:center}"
     "#dawgbox,#lock{display:none!important}"  # the floating dashboard mascot is not wanted on this page
 )
 
 
-def result_page(outcome: str, payment: dict | None = None) -> str:
+def result_page(outcome: str, payment: dict | None = None, back_url: str | None = None) -> str:
     mood, headline, message = OUTCOMES.get(outcome, OUTCOMES["error"])
     ref = ""
     if payment:
@@ -48,6 +49,8 @@ def result_page(outcome: str, payment: dict | None = None) -> str:
         f"<style>{_CSS}</style></head><body>"
         '<main class="card"><div class="brand">PayDawg</div>'
         f'<div data-dawg="190" data-mood="{escape(mood)}" aria-hidden="false"></div>'
-        f"<h1>{escape(headline)}</h1><p>{escape(message)}</p>{ref}</main>"
+        f"<h1>{escape(headline)}</h1><p>{escape(message)}</p>{ref}"
+        + (f'<a class="back" href="{escape(back_url)}">Back to the shop</a>' if back_url else "")
+        + "</main>"
         '<script src="/dashboard/dawg.js"></script></body></html>'
     )

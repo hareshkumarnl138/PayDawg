@@ -4,7 +4,7 @@
 <body>
 <header class="topbar"><div class="brand"><span class="brand-mark" data-dawg="38" data-mood="idle" aria-label="PayDawg"></span><div><h1>PayDawg</h1><p>Payment risk monitor</p></div></div><div class="top-right"><span id="railBadge" class="badge">Loading mode…</span><button id="refreshBtn" class="secondary">Refresh</button></div></header>
 <main class="wrap">
-<section class="intro"><div><p class="eyebrow">MERCHANT CONSOLE</p><h2>Every payment has a signal.</h2><p class="muted">Screen payments, review risk reasons, and inspect the event trail.</p></div><a class="docs" href="/docs">API docs ↗</a></section>
+<section class="intro"><div><p class="eyebrow">MERCHANT CONSOLE</p><h2>Every payment has a signal.</h2><p class="muted">Screen payments, review risk reasons, and inspect the event trail.</p></div><div class="intro-links"><a class="docs" href="/shop" target="_blank" rel="noopener">Pet shop ↗</a><a class="docs" href="/docs">API docs ↗</a></div></section>
 <section id="shop" class="panel" hidden>
 <div class="panel-head"><div><h3>Demo shop</h3><p class="muted">Sends real POST /v1/payments requests to this API · mock mode only</p></div><button id="shopReset" class="secondary" type="button">Reset demo</button></div>
 <div class="body"><form id="shopForm" autocomplete="off">
@@ -29,7 +29,14 @@
 <button type="button" data-sc="demo">Run the 3-payment demo</button>
 </div></div><div id="shopNote" role="status"></div></section>
 <section class="metrics"><article><span>Total payments</span><strong id="totalCount">—</strong></article><article><span>Wag · low risk</span><strong id="wagCount">—</strong></article><article><span>Growl · review</span><strong id="growlCount">—</strong></article><article><span>Bark · blocked</span><strong id="barkCount">—</strong></article></section>
-<section class="panel"><div class="panel-head"><div><h3>Payments</h3><p class="muted">Newest first · mock mode is SIMULATED</p></div><select id="filter"><option value="all">All verdicts</option><option>Wag</option><option>Growl</option><option>Bark</option></select></div>
+<section class="panel notebook" aria-labelledby="nbTitle"><div class="panel-head"><div><h3 id="nbTitle">Dawg's Notebook</h3><p class="muted" id="nbNote">What Dawg has learned about this shop from captured payments.</p></div></div>
+<div class="nb-grid">
+<article><span>Usual basket</span><strong id="nbBasket">—</strong><small id="nbBiggest">Nothing captured yet</small></article>
+<article><span>Unusual above</span><strong id="nbUnusual">—</strong><small id="nbUnusualNote">Needs one captured payment</small></article>
+<article><span>Usual hours</span><strong id="nbHours">—</strong><small id="nbHoursNote"></small></article>
+<article><span>Last 10 minutes</span><strong id="nbPace">—</strong><div class="meter" role="meter" id="nbMeterBox" aria-label="Payments in the last 10 minutes against the surge level" aria-valuemin="0" aria-valuemax="15" aria-valuenow="0"><i id="nbMeter"></i></div><small id="nbPaceNote"></small></article>
+</div></section>
+<section class="panel"><div class="panel-head"><div><h3>Payments</h3><p class="muted" id="railNote">Newest first</p></div><select id="filter"><option value="all">All verdicts</option><option>Wag</option><option>Growl</option><option>Bark</option></select></div>
 <div class="table-wrap"><table><thead><tr><th>Payment</th><th>Customer</th><th>Amount</th><th>Verdict</th><th>Status</th><th>Risk reasons</th><th>Actions</th></tr></thead><tbody id="paymentsBody"><tr><td colspan="7" class="empty">Loading payments…</td></tr></tbody></table></div><p id="notice" class="notice" role="status"></p></section>
 <section class="panel"><div class="panel-head"><div><h3>Payment details</h3><p class="muted">Select a payment row to view its event history.</p></div></div><pre id="details" class="details">Choose a payment to inspect its event trail.</pre></section>
 <footer>PayDawg MVP · Sandbox/mock only · Not a production fraud decision system</footer>

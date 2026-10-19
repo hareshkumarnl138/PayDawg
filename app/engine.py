@@ -1,10 +1,11 @@
 """Combines deterministic checks with optional LLM analysis."""
+from app.notebook import ai_baseline
 from app.screening.rules import evaluate_rules
 from app.screening.llm import analyze
 
 async def decide(payment: dict, notebook: dict, recent_payments: list[dict]) -> dict:
     rules = evaluate_rules(payment, notebook, recent_payments)
-    llm_result = await analyze(payment, notebook, rules["flags"])
+    llm_result = await analyze(payment, ai_baseline(notebook), rules["flags"])
     llm = llm_result["analysis"]
     reasons = list(rules["reasons"])
     level = rules["risk_level"]

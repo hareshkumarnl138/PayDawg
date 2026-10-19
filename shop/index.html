@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leash &amp; Larder</title>
+<meta name="description" content="A demo pet shop whose checkout is screened by PayDawg.">
+<link rel="preload" href="/shop/assets/fonts/atkinson-next-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/shop/assets/fonts/alfa-slab-one-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/dashboard/dawg.css">
+<link rel="stylesheet" href="/shop/assets/shop.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-bone" viewBox="0 0 64 64"><path transform="rotate(-28 32 32)" d="M21.66 29H42.34A6 6 0 1 1 51.32 32A6 6 0 1 1 42.34 35H21.66A6 6 0 1 1 12.68 32A6 6 0 1 1 21.66 29Z"/></symbol>
+    <symbol id="i-fish" viewBox="0 0 64 64"><path d="M12 32C20 20 38 19 47 32C38 45 20 44 12 32Z"/><path d="M47 32L56 23V41Z"/><path d="M33 26C35 30 35 34 33 38"/><circle cx="20" cy="30" r="1.6" class="dot"/></symbol>
+    <symbol id="i-ball" viewBox="0 0 64 64"><circle cx="32" cy="32" r="17"/><path d="M19.5 20.5C27 26 27 38 19.5 43.5"/><path d="M44.5 20.5C37 26 37 38 44.5 43.5"/></symbol>
+    <symbol id="i-rope" viewBox="0 0 64 64"><path d="M19 41C25 30 39 38 45 24"/><path d="M23 35.5C29 32 34 37 39 32"/><circle cx="16" cy="45" r="5"/><circle cx="48" cy="20" r="5"/><path d="M12.5 49.5L9 54M15.5 50L14 55.5M51.5 15.5L55 11M48.5 15L50 9.5"/></symbol>
+    <symbol id="i-leash" viewBox="0 0 64 64"><ellipse cx="19" cy="19" rx="7.5" ry="9.5"/><path d="M24 26C30 40 38 33 43.5 41.5"/><rect x="42" y="41" width="8" height="12" rx="3" transform="rotate(-38 46 47)"/><circle cx="51.5" cy="54.5" r="3"/></symbol>
+    <symbol id="i-bowl" viewBox="0 0 64 64"><path d="M10 33H54L48.5 46.5C47.6 48.6 46 49.5 43.6 49.5H20.4C18 49.5 16.4 48.6 15.5 46.5Z"/><path d="M19 33C19 28 25 26.5 28 29.5C29.5 25 37 25 38 30C40 26.5 46 27.5 46 33"/></symbol>
+    <symbol id="i-coat" viewBox="0 0 64 64"><path d="M23 13L32 18L41 13L52 22L46.5 28.5L44 26.5V51H20V26.5L17.5 28.5L12 22Z"/><path d="M32 18V51"/><path d="M26 36H29M35 36H38"/></symbol>
+    <symbol id="i-bed" viewBox="0 0 64 64"><path d="M9 41C9 31 15 26 22 26H42C49 26 55 31 55 41V45C55 48 53.5 49.5 50.5 49.5H13.5C10.5 49.5 9 48 9 45Z"/><path d="M17 41.5C17 36.5 21 34 25.5 34H38.5C43 34 47 36.5 47 41.5"/></symbol>
+  </defs>
+</svg>
+
+<p class="testmode" id="testmode">Test mode: payments here are simulated, so no money moves.</p>
+
+<header class="top">
+  <h1 class="plate"><span>Leash &amp; Larder</span></h1>
+  <p class="tagline">Everyday things for dogs</p>
+  <a class="chip" id="chip" href="#receipt" hidden><span id="chipText">0 items</span></a>
+</header>
+
+<main class="layout">
+  <section class="shelf" aria-label="Products">
+    <ul class="grid" id="grid"><li class="loading">Loading the shelves…</li></ul>
+  </section>
+
+  <aside class="receipt-wrap" id="receipt" aria-labelledby="receiptTitle">
+    <div class="paper">
+      <h2 class="paper-shop" id="receiptTitle">Your order</h2>
+      <p class="paper-meta" id="orderNo"></p>
+      <ul class="lines" id="lines"></ul>
+      <p class="empty" id="empty">Your order is empty. Add something your dog will like.</p>
+      <div class="total" id="totalRow" hidden><span>Total (USD)</span><span id="total">$0.00</span></div>
+
+      <form id="payForm" class="pay" novalidate hidden>
+        <label for="email">Email for the receipt</label>
+        <input id="email" name="email" type="email" autocomplete="email" value="sam@example.com" required>
+        <p class="field-error" id="emailError" hidden>Enter an email address like name@example.com.</p>
+        <button type="submit" class="pay-btn" id="payBtn">Pay</button>
+        <p class="pay-note" id="payNote">Simulated: there is no PayPal step and no money moves.</p>
+      </form>
+
+      <div class="stamp-zone" id="stampZone" hidden><span class="stamp" id="stamp"></span></div>
+      <p class="result" id="result" role="status" aria-live="polite"></p>
+      <button type="button" class="again" id="again" hidden>Start a new order</button>
+
+      <p class="checked"><span class="mini" data-dawg="44" data-mood="idle" aria-hidden="true"></span>
+        <span>Payments here are checked by PayDawg before anything is charged.</span></p>
+    </div>
+  </aside>
+</main>
+
+<footer class="foot">
+  <p>Leash &amp; Larder is a demo shop for PayDawg. Running the shop? Open the <a href="/">merchant console</a>.</p>
+</footer>
+<p class="sr-only" id="announce" aria-live="polite"></p>
+
+<script src="/dashboard/dawg.js"></script>
+<script src="/shop/assets/shop.js"></script>
+</body>
+</html>

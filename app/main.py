@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -16,9 +16,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data
+from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data, seed_demo_history
+from app import notebook as dawg_notebook
 from app.models import PaymentCreate, utc_now
 from app.pages import result_page
+from app.shop import router as shop_router, SHOP_DIR
 from app.engine import decide
 from app.ratelimit import limiter, client_key
 from app.rails.base import RailError
@@ -130,6 +132,14 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(_json_safe(exc.errors()))})
 DASHBOARD = Path(__file__).resolve().parent.parent / "dashboard"
 app.mount("/dashboard", StaticFiles(directory=str(DASHBOARD)), name="dashboard")
+# The demo pet shop (app/shop.py): its page at /shop, its files at /shop/assets.
+app.include_router(shop_router)
+app.mount("/shop/assets", StaticFiles(directory=str(SHOP_DIR)), name="shop")
+
+
+def buyer_page(outcome: str, payment: dict | None = None) -> str:
+    """The Dawg page a buyer sees after PayPal, linking back to the shop when SHOP_URL is set."""
+    return result_page(outcome, payment, back_url=settings.shop_url or None)
 
 def get_rail():
     if settings.rail_provider == "mock":
@@ -188,6 +198,35 @@ def demo_reset():
     limiter.reset()
     return {"ok": True}
 
+@app.post("/v1/demo/seed", dependencies=[Depends(require_admin)])
+def demo_seed(merchant_id: str = DEFAULT_MERCHANT):
+    """Mock mode only, SIMULATED: give the shop's Notebook about two weeks of past trading, so a live
+    simulation starts from a shop with a past instead of a brand-new one. Payments are not touched."""
+    if settings.rail_provider != "mock":
+        raise HTTPException(403, "Seeding a simulated history is only available when PAYPAL_MODE=mock.")
+    with db_session() as db:
+        if not db.execute("SELECT 1 FROM notebook WHERE merchant_id=?", (merchant_id,)).fetchone():
+            raise HTTPException(404, "Merchant not found.")
+    seed_demo_history(merchant_id)
+    return notebook_summary(merchant_id)
+
+
+def notebook_summary(merchant_id: str) -> dict:
+    with db_session() as db:
+        row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (merchant_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Merchant not found.")
+        since = (datetime.now(timezone.utc) - timedelta(minutes=settings.velocity_window_minutes)).isoformat()
+        recent_count = db.execute("SELECT COUNT(*) FROM payments WHERE merchant_id=? AND created_at >= ?",
+                                  (merchant_id, since)).fetchone()[0]
+    return dawg_notebook.summary(dict(row), dawg_notebook.to_local(datetime.now(timezone.utc)), recent_count)
+
+
+@app.get("/v1/notebook", dependencies=[Depends(require_admin)])
+def get_notebook(merchant_id: str = DEFAULT_MERCHANT):
+    """What Dawg has learned about this shop, and the limits the rules apply right now."""
+    return notebook_summary(merchant_id)
+
 @app.get("/health")
 def health():
     return {"ok": True, "rail": settings.rail_provider, "llm": settings.llm_provider,
@@ -229,9 +268,14 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
         notebook_row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (body.merchant_id,)).fetchone()
         notebook = dict(notebook_row) if notebook_row else {}
         cols = "id, merchant_id, amount, customer_id, order_ref, created_at, status"
+        # Everything inside the rule windows (not a fixed number of rows), so the shop-wide count stays right
+        # however busy the shop is. The cap only guards memory.
+        since = (datetime.now(timezone.utc) - timedelta(
+            seconds=max(settings.velocity_window_minutes * 60, settings.duplicate_window_seconds))).isoformat()
         recent = {row["id"]: dict(row) for row in db.execute(
-            f"SELECT {cols} FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100", (body.merchant_id,)).fetchall()}
-        # A long-standing customer must not look "new" just because their last payment is older than the 100 above.
+            f"SELECT {cols} FROM payments WHERE merchant_id=? AND created_at >= ? ORDER BY created_at DESC LIMIT 5000",
+            (body.merchant_id, since)).fetchall()}
+        # A long-standing customer must not look "new" just because their last payment is older than the window.
         for row in db.execute(f"SELECT {cols} FROM payments WHERE merchant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 25",
                               (body.merchant_id, body.customer_id)).fetchall():
             recent.setdefault(row["id"], dict(row))
@@ -400,22 +444,22 @@ async def paypal_return(request: Request, token: str):
         row = db.execute("SELECT * FROM payments WHERE provider_order_id=?", (token,)).fetchone()
         if not row:
             if html:
-                return HTMLResponse(result_page("notfound"), status_code=404)
+                return HTMLResponse(buyer_page("notfound"), status_code=404)
             raise HTTPException(404, "PayPal order was not found.")
         payment = dict(row)
         if payment["status"] not in {"screened"}:
             if html:
                 outcome = payment["status"] if payment["status"] in {"captured", "held"} else "processed"
-                return HTMLResponse(result_page(outcome, payment))
+                return HTMLResponse(buyer_page(outcome, payment))
             return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
     try:
         status = await settle_buyer_approval(payment, "paypal.buyer_approved", "paypal.return_failed")
     except Exception as exc:
         if html:
-            return HTMLResponse(result_page("error", payment), status_code=502)
+            return HTMLResponse(buyer_page("error", payment), status_code=502)
         raise HTTPException(502, "PayPal buyer approval was received, but the payment operation failed.") from exc
     if html:
-        return HTMLResponse(result_page("held" if status == "held" else "captured", payment))
+        return HTMLResponse(buyer_page("held" if status == "held" else "captured", payment))
     return {"payment_id": payment["id"], "status": status, "verdict": payment["verdict"],
             "message": "Authorization held for merchant review." if status == "held" else "Payment captured."}
 
@@ -428,7 +472,7 @@ def paypal_cancel(request: Request, token: str | None = None):
             if row:
                 update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
     if wants_html(request):
-        return HTMLResponse(result_page("cancelled"))
+        return HTMLResponse(buyer_page("cancelled"))
     return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
 
 @app.post("/webhooks/paypal")

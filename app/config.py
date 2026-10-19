@@ -20,6 +20,8 @@ class Settings:
     paypal_webhook_id: str = os.getenv("PAYPAL_WEBHOOK_ID", "")
     # Where this server is reachable by buyers (PayPal redirects them back here). Set it when deployed.
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+    # Where the buyer pages after PayPal link back to ("Back to the shop"). Empty hides the link.
+    shop_url: str = os.getenv("SHOP_URL", "/shop").strip()
     # When set, the merchant console endpoints (list, details, approve, void, demo reset) need this token.
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "none").strip().lower()

@@ -38,7 +38,7 @@ Keep `PAYPAL_MODE=mock` in `.env`, then run:
 uvicorn app.main:app --reload
 ```
 
-Open http://127.0.0.1:8000 for the dashboard and http://127.0.0.1:8000/docs for API docs.
+Open http://127.0.0.1:8000 for the dashboard, http://127.0.0.1:8000/shop for the demo pet shop and http://127.0.0.1:8000/docs for API docs.
 
 **SIMULATED buyer approval:** mock mode has no real buyer, so the buyer-approval step is simulated when a payment is created. A **Wag** is captured immediately; a **Growl** is authorized and **held** until the merchant clicks **Capture** or **Void** on the dashboard; a **Bark** is blocked and no order is created.
 
@@ -46,7 +46,20 @@ Open http://127.0.0.1:8000 for the dashboard and http://127.0.0.1:8000/docs for 
 
 **Rate limit ("too many tries tire the Dawg").** One client may send `RATE_LIMIT_ATTEMPTS` (12) payment requests per `RATE_LIMIT_WINDOW_SECONDS` (10), and the whole shop `RATE_LIMIT_GLOBAL_ATTEMPTS` (120). The next one gets **HTTP 429** with a `Retry-After` header, and the Dawg falls asleep behind a "Beware of DAWGS" sign for `RATE_LIMIT_LOCK_SECONDS` (15). Responses carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`. `GET /v1/rate-limit` reports the lock, and `POST /v1/demo/reset` (mock mode only) clears demo data. State is in memory per process; set `RATE_LIMIT_ATTEMPTS=0` to disable.
 
-Payment statuses: `created`, `screened`, `blocked` (Bark), `held` (Growl authorized), `approved`, `captured`, `voided`, `refunded`, `failed`. The merchant's Notebook (usual amounts) only learns from payments that are **captured**, never from held, voided or blocked ones.
+Payment statuses: `created`, `screened`, `blocked` (Bark), `held` (Growl authorized), `approved`, `captured`, `voided`, `refunded`, `failed`. The merchant's Notebook (usual amounts, hours and pace) only learns from payments that are **captured**, never from held, voided or blocked ones.
+
+## The pet shop and live traffic
+
+**Leash & Larder** (`/shop`) is a small demo pet shop whose checkout runs through PayDawg, so a demo is a real purchase instead of a button press. It plays the merchant's own website: prices live on its server (the browser cannot change what it pays), it talks to PayDawg only through `POST /v1/payments` like any shop would, and PayDawg gets a stable customer number, never the buyer's email. In mock mode the receipt is stamped **PAID**, **ON HOLD** or **DECLINED** straight away. With `PAYPAL_MODE=paypal` the buyer approves the payment on the PayPal sandbox and lands on Dawg's result page, which links back to the shop (`SHOP_URL`, default `/shop`; leave it empty to hide the link). Its fonts are bundled (SIL Open Font License, `shop/fonts/OFL.txt`), so it also works offline.
+
+**Live traffic (mock mode).** With the server running, in a second window:
+
+```bash
+python demo_shop/simulate.py            # about 7 orders a minute until Ctrl+C
+python demo_shop/simulate.py --review   # also captures or voids held orders, like a shop owner
+```
+
+Most orders are ordinary: returning and first-time customers buying 1-3 things from the shop's real catalog. Mixed in at random are the things Dawg is there for: an order far bigger than usual (Growl), a double-clicked Pay button (Bark) and a card tester firing quick orders of the cheapest item (Bark from the sixth). An empty shop first gets about two weeks of SIMULATED trading history in its Notebook (`POST /v1/demo/seed`, mock mode only, no payments are created), so the stream starts from a shop with a normal to compare against. `--no-history` starts from a brand-new shop instead, `--reset` clears the demo first, `--speed 2` doubles the pace and `--minutes 3` stops after three minutes. Real PayPal orders need a person to approve each one, so the simulator refuses to run in paypal mode; use the shop for that.
 
 ## How screening works
 
@@ -55,8 +68,16 @@ Modelled on how real gateways behave (duplicate-transaction windows, per-card ve
 - **Hard Bark** (the optional AI can neither create nor override these):
   - *Exact duplicate*: same customer, amount and `order_ref` within `DUPLICATE_WINDOW_SECONDS` (default 120). A double-click or replayed request. Send a **new `order_ref`** for a genuine repeat purchase and it is not a duplicate.
   - *Velocity*: one customer making `VELOCITY_LIMIT` (5) or more payments inside `VELOCITY_WINDOW_MINUTES` (10).
-- **Soft signals** add to a 0-100 risk score; 40 or more is a **Growl** (authorize and hold): unusual amount (50), merchant-wide surge of `MERCHANT_SURGE_LIMIT` (15) payments in the window (40, a card-testing pattern), new customer (20), odd hour (20). A customer with an earlier captured payment gets a 20-point discount.
+- **Soft signals** add to a 0-100 risk score; 40 or more is a **Growl** (authorize and hold): unusual amount (50), shop-wide surge (40, a card-testing pattern), new customer (20), odd hour (20). A customer with an earlier captured payment gets a 20-point discount.
 - A bulk order is a single payment with a bigger amount: buying 4 x 18 as 72 is not unusual, because the threshold is 5x the shop average (or 2x its largest payment).
+
+**Dawg's Notebook learns each shop's normal**, from captured payments only, so the soft signals fit the shop instead of fixed demo numbers (`app/notebook.py`):
+
+- *Unusual amount*: above `LARGE_AMOUNT_MULTIPLE` (5) times the shop's average captured payment, or twice its largest.
+- *Usual hours*: the default 09:00-18:59, plus every hour in which the shop has at least 3 captured payments making up 2% or more of its sales. Learning only adds hours, so an evening shop stops being flagged in the evening.
+- *Pace*: a surge is at least twice the shop's busiest normal 10 minutes so far (that peak fades to about half over a day), and never below `MERCHANT_SURGE_LIMIT` (15), which is all a brand-new shop has to go on. The 10 minutes in progress never count, and a payment that was part of a surge, or captured long after it arrived, never teaches it. So a busy shop is not treated as an attack, and an attacker cannot raise the bar quickly: it can at most double every 10 minutes.
+
+A brand-new shop is judged exactly as before, and is strict until it has history. The dashboard's **Dawg's Notebook** panel shows what has been learned and the limits in force right now (`GET /v1/notebook`).
 - An *idempotency key* is different from `order_ref`: the same key returns the original result (safe retries); a new `order_ref` is a new purchase.
 
 ## Tests and demo
@@ -80,7 +101,7 @@ python demo_shop/send_demo.py
 
 **Upgrading an existing database:** idempotency fingerprints changed in this version, so re-running the demo against a `paydawg.sqlite3` created by an older build answers `409` and says so. Run `python demo_shop/reset_demo.py` once (mock mode) and carry on.
 
-Tests use a temporary SQLite database and mock rail; they do not contact PayPal or an LLM.
+Tests use a temporary SQLite database and mock rail; they do not contact PayPal or an LLM (the AI path is tested against a fake Ollama).
 
 ## PayPal Sandbox (the real thing)
 
@@ -114,15 +135,22 @@ This is a hackathon MVP, not production software.
 - Set `ADMIN_TOKEN`. Without it anyone who can reach the server can list, approve or void payments. With it, the dashboard asks for the token once per browser session. Creating payments (`POST /v1/payments`) stays open because that is the merchant app's call.
 - SQLite lives in `DATABASE_PATH`. Free hosts such as Render's free tier have an ephemeral disk, so the database resets on every redeploy or restart. Fine for a demo, not for real money.
 - The server refuses to start with an invalid `PAYPAL_MODE`, `LLM_PROVIDER` or `MERCHANT_TIMEZONE`.
-- Set `MERCHANT_TIMEZONE` (for example `Asia/Kolkata`) so the odd-hour rule uses the shop's clock, not the server's.
+- Set `MERCHANT_TIMEZONE` (for example `Asia/Kolkata`) so the odd-hour rule and the hours the Notebook learns use the shop's clock, not the server's (a cloud server usually runs on UTC).
 
 ## The optional AI (`LLM_PROVIDER`)
 
 `ollama` calls a local Ollama server. `http_api` posts `{"model", "input": {payment, baseline, flags}, "response_format": {"type": "json_object"}}` to `LLM_HTTP_API_URL` and expects JSON `{"risk_level": "low|medium|high", "reasons": [...]}` back, either directly or as a JSON string in an `output` or `response` field. This is a simple custom contract, not the OpenAI or Anthropic API shape, so point it at a small adapter. Each call times out after `LLM_TIMEOUT_SECONDS` (10), is retried once, and then the payment falls back to rules only (the failure is logged as a warning without customer data).
 
+### Try the AI step in two minutes
+
+1. Real model: install [Ollama](https://ollama.com), run `ollama pull llama3.2`, set `LLM_PROVIDER=ollama` in `.env`, restart.
+2. No model installed: run `python demo_shop/fake_ollama.py` in a second window (a stand-in on Ollama's own port, not a real model), set `LLM_PROVIDER=ollama`, restart.
+
+Payments the AI reviewed carry a small **AI** tag in the dashboard, and its plain-English reason appears next to the rules' reasons. If Ollama is off, slow or answers nonsense, the payment is simply decided by the rules. The AI sees only the amount, currency, customer ID, description, the Notebook averages and the rule flags (never the order reference or card data), and `/health` shows which provider is active.
+
 ## Known limits
 
-Single-tenant console: `ADMIN_TOKEN` is one operator credential, not a per-merchant login. The read and action endpoints take a `merchant_id` (default `demo-merchant`) so shops do not see each other by accident, but anyone holding the token can pass any merchant id. Behind a reverse proxy the rate limit uses the IP uvicorn reports, so run it with `--proxy-headers` and a trusted `--forwarded-allow-ips`, or a client can hide behind a spoofed `X-Forwarded-For`. Velocity is keyed on `customer_id`, which a caller controls, so it slows a repeat customer rather than a determined attacker; the shop-wide surge rule is what catches a spread-out burst. Not production software. Money is stored as floating-point numbers (fine for two-decimal currencies; zero-decimal currencies such as JPY are untested). The rate limiter and idempotency checks are per process. The PayPal sandbox authorize, capture and void flow and webhook verification follow PayPal's current docs and are tested against a fake PayPal, but have not yet been run against PayPal's real sandbox: run `demo_shop/paypal_check.py` to do that.
+Single-tenant console: `ADMIN_TOKEN` is one operator credential, not a per-merchant login. The read and action endpoints take a `merchant_id` (default `demo-merchant`) so shops do not see each other by accident, but anyone holding the token can pass any merchant id. Behind a reverse proxy the rate limit uses the IP uvicorn reports, so run it with `--proxy-headers` and a trusted `--forwarded-allow-ips`, or a client can hide behind a spoofed `X-Forwarded-For`. Velocity is keyed on `customer_id`, which a caller controls, so it slows a repeat customer rather than a determined attacker; the shop-wide surge rule is what catches a spread-out burst. The Notebook's hours and pace are simple, explainable counts (one row per shop), not a statistical model, and a patient attacker who gets payments captured could still nudge them over time. Not production software. Money is stored as floating-point numbers (fine for two-decimal currencies; zero-decimal currencies such as JPY are untested). The rate limiter and idempotency checks are per process. The PayPal sandbox create, authorize, capture and void flow has been run end to end against PayPal's real sandbox (Wag captured, Growl captured, Growl voided, Bark blocked; use `demo_shop/paypal_check.py`). Webhook verification and refunds follow PayPal's current docs and are tested against a fake PayPal, but have not been run against the real sandbox.
 
 ## Environment
 

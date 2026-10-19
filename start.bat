@@ -6,7 +6,9 @@ call .venv\Scripts\activate.bat
 python -m pip install -q -r requirements.txt
 if not exist .env copy .env.example .env
 echo.
-echo PayDawg is starting. Open http://127.0.0.1:8000 in your browser. Press Ctrl+C to stop.
+echo PayDawg is starting. Console: http://127.0.0.1:8000   Pet shop: http://127.0.0.1:8000/shop
+echo Live traffic (mock mode): in a second window run  .venv\Scripts\python demo_shop\simulate.py
+echo Press Ctrl+C to stop.
 echo.
 uvicorn app.main:app --no-proxy-headers
 pause
