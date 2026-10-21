@@ -184,7 +184,7 @@ async def settle_buyer_approval(payment: dict, success_event: str, failure_event
 def dashboard():
     return FileResponse(DASHBOARD / "index.html")
 
-SOUND_NAMES = {"bark": "bark", "growl": "growl", "wag": "happy", "tired": "whine", "sleep": "snore"}
+SOUND_NAMES = {"bark": "bark", "growl": "growl", "wag": "happy"}
 SOUND_TYPES = ("ogg", "wav", "mp3", "m4a")
 
 @app.get("/dog-sounds", include_in_schema=False)
@@ -201,7 +201,7 @@ def dog_sounds():
 
 @app.get("/v1/rate-limit")
 def rate_limit_status(request: Request):
-    """Is this client currently locked out? The dashboard polls this so the Dawg can sleep on cue."""
+    """Is this client currently locked out? Scripts and the dashboard can poll it."""
     return limiter.status(client_key(request))
 
 @app.post("/v1/demo/reset", dependencies=[Depends(require_admin)])

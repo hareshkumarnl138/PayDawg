@@ -14,11 +14,7 @@
     if (key) headers["Idempotency-Key"] = key;
     const response = await fetch("/v1/payments", {method: "POST", headers, body: JSON.stringify(body)});
     const data = await response.json().catch(() => ({}));
-    const left = response.headers.get("X-RateLimit-Remaining");
-    if (left !== null) window.rlRemaining = Number(left);
     if (response.status === 429) {
-      const retry = Number(response.headers.get("Retry-After")) || 15;
-      if (window.Dawg) window.Dawg.lock(retry, 15);
       const error = new Error(data.detail || "Too many requests"); error.status = 429; throw error;
     }
     if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Request failed");
@@ -70,12 +66,6 @@
         : "17 tiny payments from 17 different customers. This shop has learned it normally handles more than that, so its surge level is " + level +
           " and nothing was flagged. Press Reset demo to try it on a brand-new shop, where the level starts at " + floor + ".");
     },
-    hammer: async () => {
-      // Deliberately exceed the per-client rate limit so the Dawg falls asleep behind the sign.
-      let sent = 0;
-      for (let i = 1; i <= 16; i++) { await send(1, who("hammer" + i), "Hammer test " + i, ref()); sent++; }
-      say("Sent " + sent + " payments without being stopped.");
-    },
     demo: async () => {
       await send(18.5, "demo-customer-01", "Normal demo purchase", null, "demo-normal-001");
       await send(950, "demo-customer-02", "Out-of-pattern demo purchase", null, "demo-large-001");
@@ -106,7 +96,6 @@
   });
   $("shopReset").addEventListener("click", () => run(async () => {
     await window.api("/v1/demo/reset", {method: "POST"});
-    window.rlRemaining = 99; say("Demo reset: payments and the Notebook are cleared.");
+    say("Demo reset: payments and the Notebook are cleared.");
   }));
-  window.addEventListener("dawg:awake", () => { window.rlRemaining = 99; });
 })();

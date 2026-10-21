@@ -39,38 +39,14 @@ body{padding-bottom:300px}
 @keyframes tilt{0%,78%,100%{transform:rotate(0)}84%{transform:rotate(-4deg)}92%{transform:rotate(3deg)}}
 .glow{animation:glow 1s ease-in-out infinite;border-color:#ffd58b!important}
 @keyframes glow{50%{box-shadow:0 0 0 4px #ffd58b55,0 0 16px #ffd58b88}}
-@media(prefers-reduced-motion:reduce){#dawgbox{transition:none}#dawgFig.walk,.glow,.mood-idle .dg,.tail{animation:none}}
+@media(prefers-reduced-motion:reduce){#dawgbox{transition:none}#dawgFig.walk,.glow,.mood-idle .dg,.mood-tired .dg,.tail{animation:none}}
 
-.dawg .sweat,.dawg .zzz{display:none}
-.mood-tired .e-tired,.mood-tired .m-tired,.mood-tired .sweat,.mood-sleep .e-sleep,.mood-sleep .m-sleep,.mood-sleep .zzz{display:inline}
-.mood-tired .ear.l,.mood-sleep .ear.l{transform:rotate(-48deg)}.mood-tired .ear.r,.mood-sleep .ear.r{transform:rotate(48deg)}
-.mood-tired .tail,.mood-sleep .tail{animation:none;transform:rotate(10deg)}
+.dawg .sweat{display:none}
+.mood-tired .e-tired,.mood-tired .m-tired,.mood-tired .sweat{display:inline}
+.mood-tired .ear.l{transform:rotate(-48deg)}.mood-tired .ear.r{transform:rotate(48deg)}
+.mood-tired .tail{animation:none;transform:rotate(10deg)}
 .mood-tired .dg{transform-origin:100px 205px;animation:pant .7s ease-in-out infinite}
 @keyframes pant{50%{transform:scaleY(1.025)}}
-.mood-sleep .dg{transform-origin:100px 205px;animation:breathe 3.2s ease-in-out infinite}
-@keyframes breathe{50%{transform:scale(1.02,1.035)}}
-.zzz text{animation:floatz 2.4s ease-in-out infinite}.zzz text:nth-child(2){animation-delay:.5s}.zzz text:nth-child(3){animation-delay:1s}
-@keyframes floatz{0%{opacity:0;transform:translateY(8px)}30%,70%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
-#lock{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#060a16e6;backdrop-filter:blur(3px);animation:fadein .35s;overflow:auto}
-#lock[hidden]{display:none}
-@keyframes fadein{from{opacity:0}}
-.lockcard{text-align:center;padding:16px;max-width:460px;width:100%}
-.ropes{display:block;margin:0 auto -4px}
-.board{position:relative;z-index:2;width:min(380px,86vw);margin:0 auto;padding:20px 16px 14px;border:3px solid #5a3612;border-radius:8px;background:repeating-linear-gradient(180deg,#b9813a 0 58px,#5f3a14 58px 61px),#a8702c;box-shadow:inset 0 0 22px #0007,0 12px 26px #000b;transform-origin:50% 0;animation:swing 3.4s ease-in-out infinite alternate}
-@keyframes swing{from{transform:rotate(-2.2deg)}to{transform:rotate(2.2deg)}}
-.board b{display:block;font:900 15px/1 "Arial Black",Impact,sans-serif;letter-spacing:.38em;color:#3a2208;text-shadow:0 1px 0 #e0b06b;margin-bottom:6px}
-.board strong{display:block;font:900 clamp(40px,12vw,58px)/1 Impact,"Arial Black",sans-serif;letter-spacing:.05em;color:#2e1a06;text-shadow:0 2px 0 #e7bb78,0 -1px 0 #0003}
-.board small{display:block;margin-top:8px;font:700 11px/1 ui-monospace,monospace;color:#3a2208;opacity:.85}
-.nail{position:absolute;top:8px;width:10px;height:10px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e8e8e8,#6d6d6d);box-shadow:0 1px 2px #0008}
-.nail.l{left:10px}.nail.r{right:10px}
-#lockDog{position:relative;z-index:1;margin-top:-34px;display:flex;justify-content:center}
-.lockmeta{margin:6px 0 4px;color:#ffb6c3;font-size:13px;font-weight:700;letter-spacing:.04em}
-.lockquote{margin:6px auto 0;min-height:3.4em;max-width:400px;color:#edf1f7;font-size:16px;line-height:1.45;font-style:italic}
-.lockquote.pop{animation:qin .45s}
-@keyframes qin{from{opacity:0;transform:translateY(6px)}}
-.lockbar{height:6px;background:#1c2742;border-radius:9px;overflow:hidden;margin:14px auto 0;max-width:340px}
-.lockbar i{display:block;height:100%;width:100%;background:#8bd5ff;transition:width .25s linear}
-@media(prefers-reduced-motion:reduce){.board,.zzz text,.mood-sleep .dg,.mood-tired .dg{animation:none}}
 
 /* ---- demo shop panel ---- */
 #shop input,#shop select{width:100%;background:#17213a;border:1px solid #34415f;border-radius:10px;color:#eaf0fb;padding:10px 12px;font:inherit;font-size:14px}

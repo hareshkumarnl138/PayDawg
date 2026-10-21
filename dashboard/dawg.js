@@ -1,7 +1,6 @@
-/* PayDawg mascot: a German Shepherd who changes face per verdict, trots in to speak, can be
-   dragged, gets tired from too many attempts and falls asleep behind a "Beware of DAWGS" sign
-   (rate-limit lockdown). Exposes window.Dawg. Dawg does not talk: he barks, growls and yips. If real recordings are in dashboard/sounds/ he plays those;
-   otherwise he uses sounds synthesized in the browser (Web Audio). */
+/* PayDawg mascot: a German Shepherd who changes face per verdict, trots in to speak and can be dragged out
+   of the way. Exposes window.Dawg. Dawg does not talk: he yips (Wag), growls (Growl) and barks (Bark). If real
+   recordings are in dashboard/sounds/ he plays those; otherwise he uses sounds synthesized in the browser. */
 (function () {
   "use strict";
   const $ = id => document.getElementById(id);
@@ -34,29 +33,18 @@
     '<g class="m m-growl"><path d="M100 120 V124" stroke="#1a1410" stroke-width="3" stroke-linecap="round"/><path d="M80 130 Q90 122 100 126 Q110 122 120 130 Q100 142 80 130Z" fill="#3a1620"/><polygon points="85,128 90,128 87.5,136" fill="#fff"/><polygon points="110,128 115,128 112.5,136" fill="#fff"/><polygon points="94,126 98,127 96,132" fill="#fff"/><polygon points="102,127 106,126 104,132" fill="#fff"/></g>' +
     '<g class="m m-bark"><path d="M100 120 V124" stroke="#1a1410" stroke-width="3" stroke-linecap="round"/><path d="M76 124 Q100 168 124 124Z" fill="#5a1224"/><polygon points="82,125 89,125 85.5,136" fill="#fff"/><polygon points="111,125 118,125 114.5,136" fill="#fff"/><ellipse cx="100" cy="148" rx="13" ry="8" fill="#ff7a93"/></g>' +
     '<g class="e e-tired"><ellipse cx="78" cy="89" rx="8.5" ry="5.5" fill="#fff"/><ellipse cx="122" cy="89" rx="8.5" ry="5.5" fill="#fff"/><circle cx="79" cy="91" r="3.8" fill="#1a1410"/><circle cx="121" cy="91" r="3.8" fill="#1a1410"/><path d="M68 85 Q78 80 88 86M112 86 Q122 80 132 85" stroke="#1a1410" stroke-width="3.4" fill="none" stroke-linecap="round"/><path d="M64 78 L91 70M136 78 L109 70" stroke="#1a1410" stroke-width="3.4" stroke-linecap="round"/></g>' +
-    '<g class="e e-sleep"><path d="M67 88 Q78 98 89 88M111 88 Q122 98 133 88" stroke="#1a1410" stroke-width="4.5" fill="none" stroke-linecap="round"/><path d="M66 74 Q78 69 90 74M110 74 Q122 69 134 74" stroke="#1a1410" stroke-width="3" fill="none" stroke-linecap="round"/></g>' +
     '<g class="m m-tired"><path d="M100 120 V124" stroke="#1a1410" stroke-width="3" stroke-linecap="round"/><path d="M84 126 Q100 148 116 126Z" fill="#7a2433"/><path d="M92 136 Q100 166 108 136Z" fill="#ff8fa3"/></g>' +
-    '<g class="m m-sleep"><path d="M100 120 V125" stroke="#1a1410" stroke-width="3" stroke-linecap="round"/><path d="M90 128 Q100 137 110 128" stroke="#1a1410" stroke-width="3" fill="none" stroke-linecap="round"/><ellipse cx="109" cy="138" rx="3" ry="4.2" fill="#8bd5ff" opacity=".85"/></g>' +
     '<g class="sweat"><path d="M153 62 q-7 11 0 15 q7 -4 0 -15z" fill="#8bd5ff" stroke="#fff" stroke-width="1"/></g>' +
-    '<g class="zzz" font-family="Inter,sans-serif" font-weight="900" fill="#8bd5ff"><text x="150" y="28" font-size="22">z</text><text x="166" y="8" font-size="28">Z</text><text x="184" y="-6" font-size="20">z</text></g>' +
     '<g class="burst"><path d="M20 20 L40 34M14 44 L36 50M26 -2 L44 18" stroke="#ff9db0" stroke-width="4" stroke-linecap="round"/><path d="M180 20 L160 34M186 44 L164 50M174 -2 L156 18" stroke="#ff9db0" stroke-width="4" stroke-linecap="round"/></g>' +
     '</g></svg>';
   }
 
-  const QUOTES = [
-    "Per policy 429: even good dogs need a nap.",
-    "This is a controlled cooldown, not a personal vendetta.",
-    "Fraud can't tire me out. Your thumbs just did.",
-    "My SLA includes sleep. Section 4, paragraph bark.",
-    "Fun fact: a calm gateway is a secure gateway. Zzz."
-  ];
   const WHY = { exact_duplicate: "that's an exact copy of a payment I just saw", velocity_breach: "way too many payments, way too fast", unusual_amount: "that amount is far above this shop's normal", new_customer: "I've never sniffed this customer before", odd_hour: "it's an odd hour for this shop", merchant_surge: "this whole shop is getting hammered with payments" };
   const TIPS = ["I sniff every payment before PayPal sees it.", "Wag means charge, Growl means hold for you, Bark means block.", "I only learn from payments that were really captured.", "A repeat purchase needs a new order reference, or I'll think it's a double-click."];
   const money = p => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: p.currency }).format(p.amount); } catch (e) { return p.currency + " " + Number(p.amount).toFixed(2); } };
   const why = p => { const w = (p.flags || []).map(f => WHY[f]).filter(Boolean); return w.length ? w.slice(0, 2).join(", and ") : "something about it smells off"; };
 
   let box, fig, bub, bt, typeT = 0, moodT = 0, speakT = 0, home = { x: 0, y: 0 }, lastSlide = 0;
-  let lockUntil = 0, lockStart = 0, lockTotal = 15, lockTimer = 0, lockIdx = -1;
 
   /* ---- dog sounds: synthesized with Web Audio, so there are no sound files and nothing to license ---- */
   let ac = null, hum = null, soundOn = true;
@@ -105,23 +93,16 @@
         tone(a, t + d, { f0: 620 - i * 25, f1: 270, dur: 0.17, gain: 0.4, attack: 0.006, cut: 1700, q: 1.4 });
         noise(a, t + d, 0.09, 0.2, 1500, 0.9);
       });
-    },
-    // tired: a soft whine that sags, then slow pants
-    tired(a, t){
-      tone(a, t, { type: "sine", f0: 900, f1: 520, dur: 0.7, gain: 0.16, attack: 0.08, cut: 2000 });
-      [0.85, 1.25, 1.65].forEach(d => noise(a, t + d, 0.3, 0.07, 1500, 0.6));
-    },
-    // asleep: one slow, soft snore
-    sleep(a, t){ noise(a, t, 1.1, 0.09, 220, 0.7); noise(a, t + 0.1, 0.8, 0.05, 110, 0.5); }
+    }
   };
-  /* Real recordings win when they exist: put bark / growl / happy / whine / snore (.ogg .wav .mp3 or .m4a) in
+  /* Real recordings win when they exist: put bark / growl / happy (.ogg .wav .mp3 or .m4a) in
      dashboard/sounds/. Anything missing keeps its synthesized sound, so the folder can start empty. */
-  const MAX_SECONDS = { bark: 2.4, growl: 2.2, wag: 1.8, tired: 2.2, sleep: 2.5 };
+  const MAX_SECONDS = { bark: 2.4, growl: 2.2, wag: 1.8 };
   const recordings = {};            // mood -> AudioBuffer (a mood with no recording is simply absent)
   let preloading = false;
   async function preload(){
     if (preloading) return; preloading = true;
-    const a = audio(); if (!a || !window.fetch) return;
+    const a = audio(); if (!a || !window.fetch || location.protocol === "file:") return;   // a saved copy of a page has no server to ask
     let found = {};
     try { const r = await fetch("/dog-sounds"); if (r.ok) found = await r.json(); } catch (e) { return; }
     Object.keys(found).forEach(async mood => {
@@ -161,7 +142,6 @@
     setTimeout(() => fig.classList.remove("walk"), 900);
   }
   function say(mood, text){
-    if (Date.now() < lockUntil) return;
     maybeSlide();
     clearTimeout(typeT); clearTimeout(moodT);
     const svg = fig.querySelector(".dawg"); setMood(mood); svg.classList.add("talking"); bt.textContent = "";
@@ -169,48 +149,16 @@
     let i = 0;
     (function step(){ i++; bt.textContent = text.slice(0, i); if (i < text.length) typeT = setTimeout(step, 24); else { svg.classList.remove("talking"); moodT = setTimeout(() => setMood("idle"), 4200); } })();
   }
-  function react(p, opts){
-    opts = opts || {};
-    const a = money(p), talk = (m, t) => opts.tired ? say("tired", t + " ...Pant, pant. I'm getting tired, please slow down!") : say(m, t);
-    if (p.verdict === "Wag") talk("wag", ["Tail wagging! " + a + " smells clean. Charged!", "Sniffed it, all good. " + a + " captured. Good human!"][Math.floor(Math.random() * 2)]);
-    else if (p.verdict === "Growl") talk("growl", "Grrr... " + why(p) + ". I'm holding " + a + ". Your call: Capture or Void?");
-    else talk("bark", "BARK! BARK! " + why(p).replace(/^./, c => c.toUpperCase()) + ". Blocked. No money moved!");
-  }
-
-  /* ---- rate-limit lockdown ---- */
-  function lock(retryAfter, total){
-    const now = Date.now();
-    if (now < lockUntil) return;
-    lockTotal = total || 15; retryAfter = Math.max(1, retryAfter || lockTotal);
-    lockStart = now - Math.max(0, lockTotal - retryAfter) * 1000; lockUntil = now + retryAfter * 1000; lockIdx = -1;
-    clearTimeout(typeT); clearTimeout(moodT); clearTimeout(speakT);
-    $("lockDog").innerHTML = dawgSVG(190, "sleep");
-    $("lock").hidden = false; box.style.opacity = "0"; box.style.pointerEvents = "none";
-    lockTick(); lockTimer = setInterval(lockTick, 250);
-  }
-  function lockTick(){
-    const t = Date.now();
-    if (t >= lockUntil) { endLock(); return; }
-    $("lockSec").textContent = Math.ceil((lockUntil - t) / 1000);
-    $("lockFill").style.width = Math.max(0, (lockUntil - t) / (lockTotal * 1000) * 100) + "%";
-    const i = Math.min(QUOTES.length - 1, Math.floor((t - lockStart) / 3000));
-    if (i !== lockIdx) { lockIdx = i; const q = $("lockQuote"); q.textContent = QUOTES[i]; q.classList.remove("pop"); void q.offsetWidth; q.classList.add("pop"); speak(QUOTES[i], "sleep"); }
-  }
-  function endLock(){
-    clearInterval(lockTimer); lockUntil = 0;
-    $("lock").hidden = true; box.style.opacity = ""; box.style.pointerEvents = "";
-    lastSlide = 0; say("wag", "Nap over! Back to sniffing. Please be gentle with me.");
-    window.dispatchEvent(new CustomEvent("dawg:awake"));
+  function react(p){
+    const a = money(p);
+    if (p.verdict === "Wag") say("wag", ["Tail wagging! " + a + " smells clean. Charged!", "Sniffed it, all good. " + a + " captured. Good human!"][Math.floor(Math.random() * 2)]);
+    else if (p.verdict === "Growl") say("growl", "Grrr... " + why(p) + ". I'm holding " + a + ". Your call: Capture or Void?");
+    else say("bark", "BARK! BARK! " + why(p).replace(/^./, c => c.toUpperCase()) + ". Blocked. No money moved!");
   }
 
   function build(){
     const host = document.createElement("div");
     host.innerHTML =
-      '<div id="lock" hidden role="alertdialog" aria-live="polite" aria-label="Dawg is resting"><div class="lockcard">' +
-      '<svg class="ropes" viewBox="0 0 300 40" width="260" height="35" aria-hidden="true"><path d="M150 0 L40 40M150 0 L260 40" stroke="#c9a46a" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="6 3"/></svg>' +
-      '<div class="board"><span class="nail l"></span><span class="nail r"></span><b>BEWARE OF</b><strong>DAWGS</strong><small>(currently asleep. do not wake.)</small></div>' +
-      '<div id="lockDog"></div><p class="lockmeta">429 Too Many Requests &middot; Dawg is back in <span id="lockSec">15</span>s</p><p id="lockQuote" class="lockquote"></p>' +
-      '<div class="lockbar"><i id="lockFill"></i></div></div></div>' +
       '<aside id="dawgbox" aria-label="Dawg the mascot"><div id="bubble" role="status" aria-live="polite"><span id="bubbleText"></span><button type="button" id="dawgSound" aria-label="Dawg sounds" aria-pressed="false"></button></div><div id="dawgFig" title="Click me, or drag me"></div></aside>';
     while (host.firstChild) document.body.appendChild(host.firstChild);
     box = $("dawgbox"); fig = $("dawgFig"); bub = $("bubble"); bt = $("bubbleText");
@@ -234,6 +182,13 @@
     fig.addEventListener("pointerup", end); fig.addEventListener("pointercancel", end);
   }
 
-  window.Dawg = { say, react, lock, isLocked: () => Date.now() < lockUntil };
+  /* Lets a page try a recording straight from a file the person picked (used by the preview page). */
+  async function loadRecording(mood, data){
+    const a = audio(); if (!a) throw new Error("Sound is muted or not available in this browser.");
+    recordings[mood] = await a.decodeAudioData(data.slice(0));
+    return recordings[mood].duration;
+  }
+  window.Dawg = { say, react, loadRecording,
+                  clearRecording: mood => { delete recordings[mood]; }, hasRecording: mood => !!recordings[mood] };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
 })();

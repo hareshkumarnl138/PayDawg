@@ -5,8 +5,6 @@ Name the files like this. Any of .ogg .wav .mp3 .m4a works, and a missing file s
   bark.wav     played for Bark
   growl.ogg    played for Growl
   happy.wav    played for Wag (happy)
-  whine.wav    played for "tired"
-  snore.wav    played for the sleeping screen
 
 Only use sounds you may use: public domain / CC0, or your own recordings. Keep each file small (a few seconds).
 Dawg plays at most about 2 seconds of each, with a quick fade out.

@@ -1,7 +1,7 @@
 const body = document.getElementById("paymentsBody");
 const notice = document.getElementById("notice");
 let allPayments = [];
-let known = null, pulseId = null, lastSig = "";
+let known = null, pulseId = null, lastSig = "";   // known: payment id -> the status Dawg last saw
 
 let adminToken = "";
 try { adminToken = sessionStorage.getItem("paydawgAdminToken") || ""; } catch (e) {}
@@ -47,24 +47,22 @@ async function load() {
     if (note) note.textContent = "Newest first · " + (health.simulated ? "mock mode is SIMULATED" : "real PayPal sandbox (test money)");
     const shop = document.getElementById("shop");
     if (shop) shop.hidden = !health.simulated;
-    try {
-      const rl = await api("/v1/rate-limit");
-      // Tiredness follows the server's own counter, so payments sent by scripts tire him too.
-      window.rlRemaining = rl.enabled ? Math.max(0, rl.limit - rl.recent) : -1;
-      if (rl.locked && window.Dawg) window.Dawg.lock(rl.retry_after, rl.lock_seconds);
-    } catch (e) {}
     allPayments = (await api("/v1/payments")).payments || [];
     try { renderNotebook(await api("/v1/notebook")); } catch (e) {}
     document.getElementById("totalCount").textContent = allPayments.length;
     document.getElementById("wagCount").textContent = allPayments.filter(p => p.verdict === "Wag").length;
     document.getElementById("growlCount").textContent = allPayments.filter(p => p.verdict === "Growl").length;
     document.getElementById("barkCount").textContent = allPayments.filter(p => p.verdict === "Bark").length;
-    const ids = allPayments.map(p => p.id);
-    if (known === null) known = new Set(ids);
+    const seen = new Map(allPayments.map(p => [p.id, p.status]));
+    if (known === null) known = seen;
     else {
-      const fresh = allPayments.filter(p => !known.has(p.id));
-      ids.forEach(id => known.add(id));
-      if (fresh.length) announce(fresh);
+      // Dawg speaks when a payment SETTLES (captured, held or blocked), not when it first appears. In PayPal mode a
+      // payment shows up before the buyer has approved it, and a failed or abandoned one must never be announced as
+      // charged. A held payment the merchant then captures is the merchant's own action, so he stays quiet for it.
+      const settled = allPayments.filter(p => known.get(p.id) !== p.status && ["captured", "held", "blocked"].includes(p.status) &&
+                                              !(p.verdict === "Growl" && p.status === "captured"));
+      known = seen;
+      if (settled.length) announce(settled);
     }
     const sig = JSON.stringify(allPayments.map(p => [p.id, p.status, p.verdict])) + pulseId;
     if (sig !== lastSig) { lastSig = sig; render(); if (pulseId) scrollToPulse(); }
@@ -108,8 +106,7 @@ function renderNotebook(nb) {
 function announce(fresh) {
   const pick = fresh.find(p => p.verdict === "Growl") || fresh[0];
   if (pick.verdict === "Growl") pulseId = pick.id;
-  const remaining = window.rlRemaining;
-  if (window.Dawg) window.Dawg.react(pick, {tired: typeof remaining === "number" && remaining >= 0 && remaining <= 3});
+  if (window.Dawg) window.Dawg.react(pick);
 }
 function scrollToPulse() {
   setTimeout(() => { const row = body.querySelector('tr[data-id="' + pulseId + '"]'); if (row) row.scrollIntoView({behavior: "smooth", block: "center"}); }, 200);
