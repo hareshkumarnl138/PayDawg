@@ -11,12 +11,13 @@ Soft signals add to a 0-100 risk score (>= 40 means review, i.e. Growl):
   who already has a captured payment (trusted repeat customer).
 
 "Unusual", "odd hour" and "surge" are judged against what Dawg's Notebook has learned about this shop
-(app/notebook.py), so a busy evening shop is not treated like a quiet 9-to-6 one.
+(app/notebook.py), so a busy evening shop is not treated like a quiet 9-to-6 one. The hour is only judged once the
+shop has enough captured payments for Dawg to know its hours.
 """
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.config import settings
-from app.notebook import surge_limit, unusual_above, usual_hours
+from app.notebook import judges_hours, surge_limit, unusual_above, usual_hours
 
 WEIGHTS = {"unusual_amount": 50, "merchant_surge": 40, "new_customer": 20, "odd_hour": 20, "large_order": 50}
 TRUSTED_DISCOUNT = 20
@@ -93,7 +94,7 @@ def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -
     if not customer_seen and baseline_count:
         flags.append("new_customer")
         reasons.append("This customer has not appeared in the merchant's recent payment history.")
-    if now.hour not in usual_hours(notebook):
+    if judges_hours(notebook) and now.hour not in usual_hours(notebook):
         flags.append("odd_hour")
         reasons.append(f"Payment arrived at {now.hour:02d}:00, outside the merchant's usual active hours.")
     hard_block = duplicate or velocity_breach

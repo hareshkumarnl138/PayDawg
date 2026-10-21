@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -16,12 +17,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.db import init_db, db_session, add_event, update_status, payment_dict, mark_captured, reset_demo_data, seed_demo_history
+from app.db import (init_db, db_session, add_event, update_status, update_status_if, payment_dict, mark_captured,
+                    reset_demo_data, seed_demo_history)
 from app import notebook as dawg_notebook
 from app.models import PaymentCreate, utc_now
 from app.pages import result_page
 from app.shop import router as shop_router, SHOP_DIR
 from app.engine import decide
+from app.screening.rules import evaluate_rules
 from app.ratelimit import limiter, client_key
 from app.rails.base import RailError
 from app.rails.mock import MockRail
@@ -55,6 +58,25 @@ def validate_config():
             ZoneInfo(settings.merchant_timezone)
         except Exception as exc:
             raise RuntimeError(f"MERCHANT_TIMEZONE '{settings.merchant_timezone}' is not a valid IANA timezone.") from exc
+    if settings.bark_stage not in {"after_approval", "before_paypal"}:
+        raise RuntimeError(f"BARK_STAGE must be 'after_approval' or 'before_paypal', got '{settings.bark_stage}'.")
+    # A value outside these ranges does not fail loudly, it quietly breaks screening (VELOCITY_LIMIT=0 would
+    # Bark every payment, a 0-minute window would never see anything), so refuse to start instead.
+    minimums = (("VELOCITY_LIMIT", settings.velocity_limit, 1), ("VELOCITY_WINDOW_MINUTES", settings.velocity_window_minutes, 1),
+                ("DUPLICATE_WINDOW_SECONDS", settings.duplicate_window_seconds, 0), ("MERCHANT_SURGE_LIMIT", settings.merchant_surge_limit, 1),
+                ("RATE_LIMIT_ATTEMPTS", settings.rate_limit_attempts, 0), ("RATE_LIMIT_WINDOW_SECONDS", settings.rate_limit_window_seconds, 1),
+                ("RATE_LIMIT_LOCK_SECONDS", settings.rate_limit_lock_seconds, 1), ("RATE_LIMIT_GLOBAL_ATTEMPTS", settings.rate_limit_global_attempts, 0),
+                ("HARD_REVIEW_AMOUNT", settings.hard_review_amount, 0))
+    for name, value, low in minimums:
+        if value < low:
+            raise RuntimeError(f"{name} must be at least {low}, got {value}.")
+    if settings.large_amount_multiple <= 0 or settings.llm_timeout_seconds <= 0:
+        raise RuntimeError("LARGE_AMOUNT_MULTIPLE and LLM_TIMEOUT_SECONDS must be above 0.")
+    if settings.rail_provider == "paypal":
+        if not settings.public_base_url.startswith(("http://", "https://")):
+            raise RuntimeError(f"PUBLIC_BASE_URL must start with http:// or https://, got '{settings.public_base_url}'.")
+        if not settings.paypal_client_id or not settings.paypal_client_secret:
+            logger.warning("PAYPAL_MODE=paypal but PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET is empty: every payment will be refused (503).")
     if settings.rail_provider == "paypal" and not settings.admin_token:
         logger.warning("ADMIN_TOKEN is not set: anyone who can reach this server can approve or void payments.")
     if not settings.trust_proxy_headers:
@@ -66,6 +88,7 @@ def startup():
     validate_config()
     init_db()
     limiter.reset()
+    _RAILS.clear()
 
 
 @asynccontextmanager
@@ -74,8 +97,24 @@ async def lifespan(_app):
     yield
 
 
+def same_site(request: Request) -> bool:
+    """Is a browser request coming from this server's own pages? Browsers send Origin on POSTs; scripts and the
+    shop's in-process call send none. Behind a proxy that rewrites Host, PUBLIC_BASE_URL's host also counts."""
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+    allowed = {request.headers.get("host", ""), request.headers.get("x-forwarded-host", ""), urlparse(settings.public_base_url).netloc}
+    return urlparse(origin).netloc in allowed - {""}
+
+
 def require_admin(request: Request):
-    """Protect the merchant console endpoints when ADMIN_TOKEN is set (header X-Admin-Token or Bearer)."""
+    """Protect the merchant console endpoints when ADMIN_TOKEN is set (header X-Admin-Token or Bearer).
+
+    Actions (POST) are also refused when a browser sends them from another website: without ADMIN_TOKEN, any page
+    the merchant happened to open could otherwise post to this console in the background (reset the demo, say).
+    """
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not same_site(request):
+        raise HTTPException(403, "This action must come from PayDawg's own console.")
     token = settings.admin_token
     if not token:
         return
@@ -141,11 +180,20 @@ def buyer_page(outcome: str, payment: dict | None = None) -> str:
     """The Dawg page a buyer sees after PayPal, linking back to the shop when SHOP_URL is set."""
     return result_page(outcome, payment, back_url=settings.shop_url or None)
 
+_RAILS: dict = {}
+
+
 def get_rail():
     if settings.rail_provider == "mock":
         return MockRail()
     if settings.rail_provider == "paypal":
-        return PayPalRail()
+        # One PayPal rail per set of credentials, so its OAuth token (valid for hours) is reused. A new rail per call
+        # fetched a fresh token before every PayPal request, doubling the round trips of every checkout.
+        key = (settings.paypal_base_url, settings.paypal_client_id, settings.paypal_client_secret)
+        rail = _RAILS.get(key)
+        if rail is None:
+            rail = _RAILS[key] = PayPalRail()
+        return rail
     raise HTTPException(500, "Unsupported PAYPAL_MODE. Choose mock or paypal.")
 
 async def settle_buyer_approval(payment: dict, success_event: str, failure_event: str) -> str:
@@ -247,6 +295,38 @@ def health():
     return {"ok": True, "rail": settings.rail_provider, "llm": settings.llm_provider,
             "simulated": settings.rail_provider == "mock"}
 
+def recent_payments(db, merchant_id: str, customer_id: str) -> list[dict]:
+    """What the rules look at: every payment inside the rule windows (not a fixed number of rows, so the shop-wide
+    count stays right however busy the shop is; the cap only guards memory), plus this customer's latest ones, so a
+    long-standing customer does not look "new" just because their last payment is older than the window."""
+    cols = "id, merchant_id, amount, customer_id, order_ref, created_at, status"
+    since = (datetime.now(timezone.utc) - timedelta(
+        seconds=max(settings.velocity_window_minutes * 60, settings.duplicate_window_seconds))).isoformat()
+    recent = {row["id"]: dict(row) for row in db.execute(
+        f"SELECT {cols} FROM payments WHERE merchant_id=? AND created_at >= ? ORDER BY created_at DESC LIMIT 5000",
+        (merchant_id, since)).fetchall()}
+    for row in db.execute(f"SELECT {cols} FROM payments WHERE merchant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 25",
+                          (merchant_id, customer_id)).fetchall():
+        recent.setdefault(row["id"], dict(row))
+    return list(recent.values())
+
+
+def recheck_hard_rules(db, payment: dict, notebook: dict, decision: dict) -> dict:
+    """Run the hard rules again just before the payment is stored.
+
+    The AI step awaits a network call that can take seconds, and another request from the same customer (a
+    double-click, a card tester's burst) may have been stored meanwhile. Nothing awaits between this check and the
+    INSERT that follows, so no request can slip in between: a duplicate or a velocity breach is still a Bark.
+    """
+    if decision["hard_block"]:
+        return decision
+    again = evaluate_rules(payment, notebook, recent_payments(db, payment["merchant_id"], payment["customer_id"]))
+    if not again["hard_block"]:
+        return decision
+    return {**decision, "verdict": "Bark", "risk_level": "high", "hard_block": True, "decision_source": "hard-rules",
+            "flags": again["flags"], "reasons": again["reasons"]}
+
+
 @app.post("/v1/payments")
 async def create_payment(body: PaymentCreate, request: Request, response: Response,
                          idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
@@ -282,23 +362,13 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
                 return payment_dict(existing)
         notebook_row = db.execute("SELECT * FROM notebook WHERE merchant_id=?", (body.merchant_id,)).fetchone()
         notebook = dict(notebook_row) if notebook_row else {}
-        cols = "id, merchant_id, amount, customer_id, order_ref, created_at, status"
-        # Everything inside the rule windows (not a fixed number of rows), so the shop-wide count stays right
-        # however busy the shop is. The cap only guards memory.
-        since = (datetime.now(timezone.utc) - timedelta(
-            seconds=max(settings.velocity_window_minutes * 60, settings.duplicate_window_seconds))).isoformat()
-        recent = {row["id"]: dict(row) for row in db.execute(
-            f"SELECT {cols} FROM payments WHERE merchant_id=? AND created_at >= ? ORDER BY created_at DESC LIMIT 5000",
-            (body.merchant_id, since)).fetchall()}
-        # A long-standing customer must not look "new" just because their last payment is older than the window.
-        for row in db.execute(f"SELECT {cols} FROM payments WHERE merchant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 25",
-                              (body.merchant_id, body.customer_id)).fetchall():
-            recent.setdefault(row["id"], dict(row))
-        recent = list(recent.values())
+        recent = recent_payments(db, body.merchant_id, body.customer_id)
         pid = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
         payment = {"id": pid, **request_data, "created_at": created_at}
         decision = await decide(payment, notebook, recent)
+        if settings.llm_provider != "none":
+            decision = recheck_hard_rules(db, payment, notebook, decision)
         status = "blocked" if decision["verdict"] == "Bark" else "screened"
         try:
             db.execute("""INSERT INTO payments
@@ -363,7 +433,12 @@ def list_payments(limit: int = 100, merchant_id: str = DEFAULT_MERCHANT):
     with db_session() as db:
         rows = db.execute("SELECT * FROM payments WHERE merchant_id=? ORDER BY created_at DESC LIMIT ?",
                           (merchant_id, limit)).fetchall()
-        return {"merchant_id": merchant_id, "payments": [payment_dict(row) for row in rows]}
+        # Totals over ALL of this shop's payments: the list itself stops at `limit`, and counting the list made the
+        # dashboard's totals freeze at 100 during a long simulation.
+        counts = {r["verdict"]: r["n"] for r in db.execute(
+            "SELECT verdict, COUNT(*) AS n FROM payments WHERE merchant_id=? GROUP BY verdict", (merchant_id,)).fetchall()}
+        totals = {"all": sum(counts.values()), **{v: counts.get(v, 0) for v in ("Wag", "Growl", "Bark")}}
+        return {"merchant_id": merchant_id, "payments": [payment_dict(row) for row in rows], "totals": totals}
 
 @app.get("/v1/payments/{payment_id}", dependencies=[Depends(require_admin)])
 def get_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
@@ -395,14 +470,15 @@ async def approve_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
                 raise HTTPException(409, "Capture is already in progress for this payment.")
         if settings.rail_provider == "paypal" and status == "screened":
             raise HTTPException(409, "Buyer must follow the PayPal approval_url first.")
-        capture_authorization = payment["verdict"] == "Growl" and status in {"held", "approved"}
-        if capture_authorization:
-            # Compare-and-swap, so two clicks (or two browser tabs) cannot both capture the same authorization.
-            claimed = db.execute("UPDATE payments SET status='approved', updated_at=? WHERE id=? AND status=? AND updated_at=?",
-                                 (utc_now(), payment_id, status, payment["updated_at"]))
-            if claimed.rowcount != 1:
-                raise HTTPException(409, "Capture is already in progress for this payment.")
-            add_event(db, payment_id, "payment.merchant_approved", status, "approved", {"rail": settings.rail_provider})
+        # A held Growl has an authorization to capture. Without one (mock mode, or a retry after a crash before
+        # PayPal authorized it) a Growl is authorized first, and a Wag is captured.
+        capture_authorization = payment["verdict"] == "Growl" and bool(payment.get("provider_authorization_id"))
+        # Compare-and-swap claim on EVERY path, so two clicks, two tabs or a retry cannot both run the rail step.
+        claimed = db.execute("UPDATE payments SET status='approved', updated_at=? WHERE id=? AND status=? AND updated_at=?",
+                             (utc_now(), payment_id, status, payment["updated_at"]))
+        if claimed.rowcount != 1:
+            raise HTTPException(409, "Capture is already in progress for this payment.")
+        add_event(db, payment_id, "payment.merchant_approved", status, "approved", {"rail": settings.rail_provider})
     try:
         rail = get_rail()
         if payment["verdict"] == "Growl" and not capture_authorization:
@@ -417,12 +493,14 @@ async def approve_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
     except Exception as exc:
         logger.warning("Approve failed for payment %s (%s)", payment_id, type(exc).__name__)
         with db_session() as db:
+            # Only undo our own claim: if something else moved the payment meanwhile (a void that won the race,
+            # a webhook), that newer, real result stays.
             if capture_authorization:
                 # The authorization is still open at the provider, so put the payment back to "held":
                 # the merchant can retry the capture or void it instead of being stuck.
-                update_status(db, payment_id, "held", "rail.capture_failed", {"error": str(exc)[:200]})
+                update_status_if(db, payment_id, {"approved"}, "held", "rail.capture_failed", {"error": str(exc)[:200]})
             else:
-                update_status(db, payment_id, "failed", "rail.approve_failed", {"error": str(exc)[:200]})
+                update_status_if(db, payment_id, {"approved"}, "failed", "rail.approve_failed", {"error": str(exc)[:200]})
         raise HTTPException(502, "Payment rail approval/capture failed. The payment was left in a state you can retry or void. Check server logs.") from exc
     with db_session() as db:
         if result.get("authorization_id"):
@@ -453,7 +531,8 @@ async def void_payment(payment_id: str, merchant_id: str = DEFAULT_MERCHANT):
         logger.warning("Void failed for payment %s (%s)", payment_id, type(exc).__name__)
         raise HTTPException(502, "Payment rail could not void the authorization.") from exc
     with db_session() as db:
-        update_status(db, payment_id, "voided", "payment.voided", {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
+        update_status_if(db, payment_id, {"held", "approved"}, "voided", "payment.voided",
+                         {"rail": settings.rail_provider, "simulated": result.get("simulated", False)})
         return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone())
 
 def wants_html(request: Request) -> bool:
@@ -462,10 +541,14 @@ def wants_html(request: Request) -> bool:
 
 
 @app.get("/paypal/return")
-async def paypal_return(request: Request, token: str):
+async def paypal_return(request: Request, token: str | None = None):
     """Handle PayPal's buyer redirect after approval of a sandbox order.
     Browsers get a small Dawg page; everything else gets JSON."""
     html = wants_html(request)
+    if not token:
+        if html:
+            return HTMLResponse(buyer_page("notfound"), status_code=404)
+        raise HTTPException(400, "The PayPal token is missing from this link.")
     with db_session() as db:
         row = db.execute("SELECT * FROM payments WHERE provider_order_id=?", (token,)).fetchone()
         if not row:
@@ -485,7 +568,9 @@ async def paypal_return(request: Request, token: str):
                     "message": "Dawg stopped this payment. Nothing was charged."}
         if payment["status"] != "screened":
             if html:
-                outcome = payment["status"] if payment["status"] in {"captured", "held"} else "processed"
+                # A refresh (or a second visit) shows what really happened. A failed last step keeps saying so,
+                # instead of "Already handled", so the buyer knows not to pay twice.
+                outcome = {"captured": "captured", "held": "held", "failed": "error"}.get(payment["status"], "processed")
                 return HTMLResponse(buyer_page(outcome, payment))
             return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
         # Claim the payment before touching the rail, so a refresh or a second tab on this page cannot
@@ -511,20 +596,30 @@ async def paypal_return(request: Request, token: str):
 @app.get("/paypal/cancel")
 def paypal_cancel(request: Request, token: str | None = None):
     """Record a buyer-cancelled PayPal checkout without attempting capture."""
+    payment, outcome = None, "cancelled"
     if token:
         with db_session() as db:
-            row = db.execute("SELECT id, status FROM payments WHERE provider_order_id=?", (token,)).fetchone()
-            # Only a checkout still waiting for the buyer can be cancelled. A captured, held or blocked payment
-            # keeps its status, so a stale or replayed cancel link cannot overwrite a real result.
-            if row and row["status"] == "screened":
-                update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
+            row = db.execute("SELECT * FROM payments WHERE provider_order_id=?", (token,)).fetchone()
+            if row:
+                payment = dict(row)
+                # Only a checkout still waiting for the buyer can be cancelled. A captured, held or blocked payment
+                # keeps its status, so a stale or replayed cancel link cannot overwrite a real result, and the page
+                # says what really happened instead of "nothing was charged".
+                if payment["status"] == "screened":
+                    update_status(db, payment["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
+                else:
+                    outcome = {"captured": "captured", "held": "held", "approved": "processed", "voided": "processed",
+                               "refunded": "processed"}.get(payment["status"], "cancelled")
     if wants_html(request):
-        return HTMLResponse(buyer_page("cancelled"))
+        return HTMLResponse(buyer_page(outcome, payment if outcome != "cancelled" else None))
+    if outcome != "cancelled":
+        return {"status": payment["status"], "message": "This payment already has a result, so it was not cancelled."}
     return {"status": "cancelled", "message": "Buyer cancelled PayPal checkout."}
 
 @app.post("/webhooks/paypal")
 async def paypal_webhook(request: Request):
-    # TODO: Verify the header set and verification endpoint against current PayPal webhook docs before production use.
+    # Follows PayPal's verify-webhook-signature docs (the five PAYPAL-* headers plus webhook_id and the event). Tested
+    # against a fake PayPal only; run one real sandbox webhook before relying on it.
     if settings.rail_provider != "paypal" or not settings.paypal_webhook_id:
         raise HTTPException(503, "PayPal webhook verification is not configured.")
     try:

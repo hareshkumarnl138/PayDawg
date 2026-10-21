@@ -1,6 +1,8 @@
 /* PayDawg mascot: a German Shepherd who changes face per verdict, trots in to speak and can be dragged out
    of the way. Exposes window.Dawg. Dawg does not talk: he yips (Wag), growls (Growl) and barks (Bark). If real
-   recordings are in dashboard/sounds/ he plays those; otherwise he uses sounds synthesized in the browser. */
+   recordings are in dashboard/sounds/ he plays those; otherwise he uses sounds synthesized in the browser.
+   Every page with [data-dawg] elements gets the drawing; only a page whose <body> has data-mascot (the console)
+   gets the floating, talking Dawg. */
 (function () {
   "use strict";
   const $ = id => document.getElementById(id);
@@ -39,15 +41,15 @@
     '</g></svg>';
   }
 
-  const WHY = { exact_duplicate: "that's an exact copy of a payment I just saw", velocity_breach: "way too many payments, way too fast", unusual_amount: "that amount is far above this shop's normal", new_customer: "I've never sniffed this customer before", odd_hour: "it's an odd hour for this shop", merchant_surge: "this whole shop is getting hammered with payments" };
+  const WHY = { exact_duplicate: "that's an exact copy of a payment I just saw", velocity_breach: "way too many payments, way too fast", unusual_amount: "that amount is far above this shop's normal", new_customer: "I've never sniffed this customer before", odd_hour: "it's an odd hour for this shop", merchant_surge: "this whole shop is getting hammered with payments", large_order: "it's a very big payment, so you should confirm it" };
   const TIPS = ["I sniff every payment before PayPal sees it.", "Wag means charge, Growl means hold for you, Bark means block.", "I only learn from payments that were really captured.", "A repeat purchase needs a new order reference, or I'll think it's a double-click."];
   const money = p => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: p.currency }).format(p.amount); } catch (e) { return p.currency + " " + Number(p.amount).toFixed(2); } };
   const why = p => { const w = (p.flags || []).map(f => WHY[f]).filter(Boolean); return w.length ? w.slice(0, 2).join(", and ") : "something about it smells off"; };
 
-  let box, fig, bub, bt, typeT = 0, moodT = 0, speakT = 0, home = { x: 0, y: 0 }, lastSlide = 0;
+  let box, fig, bub, bt, typeT = 0, moodT = 0, quietT = 0, home = { x: 0, y: 0 }, lastSlide = 0;
 
   /* ---- dog sounds: synthesized with Web Audio, so there are no sound files and nothing to license ---- */
-  let ac = null, hum = null, soundOn = true;
+  let ac = null, soundOn = true;
   try { soundOn = localStorage.getItem("dawg-sound") !== "off"; } catch (e) {}
   function audio(){
     if (!soundOn) return null;
@@ -123,7 +125,8 @@
     const a = audio(); if (!a) return;
     preload();
     const t = a.currentTime + 0.03;
-    try { if (!playRecording(a, mood, t)) (SOUNDS[mood] || SOUNDS.wag)(a, t); } catch (e) {}
+    // A mood with no sound (idle, after a void) stays quiet; it used to fall back to the happy yips.
+    try { if (!playRecording(a, mood, t) && SOUNDS[mood]) SOUNDS[mood](a, t); } catch (e) {}
   }
   function setSound(on, quiet){
     soundOn = on;
@@ -142,14 +145,25 @@
     setTimeout(() => fig.classList.remove("walk"), 900);
   }
   function say(mood, text){
+    if (!box) return;                          // this page has no floating Dawg
     maybeSlide();
-    clearTimeout(typeT); clearTimeout(moodT);
+    clearTimeout(typeT); clearTimeout(moodT); clearTimeout(quietT);
+    box.classList.remove("quiet");
     const svg = fig.querySelector(".dawg"); setMood(mood); svg.classList.add("talking"); bt.textContent = "";
+    bub.setAttribute("aria-busy", "true");     // screen readers get the whole sentence once, not every letter
     speak(text, mood);
     let i = 0;
-    (function step(){ i++; bt.textContent = text.slice(0, i); if (i < text.length) typeT = setTimeout(step, 24); else { svg.classList.remove("talking"); moodT = setTimeout(() => setMood("idle"), 4200); } })();
+    (function step(){
+      i++; bt.textContent = text.slice(0, i);
+      if (i < text.length) { typeT = setTimeout(step, 24); return; }
+      svg.classList.remove("talking"); bub.setAttribute("aria-busy", "false");
+      moodT = setTimeout(() => setMood("idle"), 4200);
+      // After a while the bubble steps aside, so it does not cover the page; Dawg himself and his mute button stay.
+      quietT = setTimeout(() => box.classList.add("quiet"), 12000);
+    })();
   }
   function react(p){
+    if (!box) return;
     const a = money(p);
     if (p.verdict === "Wag") say("wag", ["Tail wagging! " + a + " smells clean. Charged!", "Sniffed it, all good. " + a + " captured. Good human!"][Math.floor(Math.random() * 2)]);
     else if (p.verdict === "Growl") say("growl", "Grrr... " + why(p) + ". I'm holding " + a + ". Your call: Capture or Void?");
@@ -157,14 +171,16 @@
   }
 
   function build(){
+    document.querySelectorAll("[data-dawg]").forEach(el => { el.innerHTML = dawgSVG(+el.dataset.dawg, el.dataset.mood || "idle"); });
+    if (!document.body.hasAttribute("data-mascot")) return;   // the shop and the buyer pages only want the drawings
     const host = document.createElement("div");
     host.innerHTML =
       '<aside id="dawgbox" aria-label="Dawg the mascot"><div id="bubble" role="status" aria-live="polite"><span id="bubbleText"></span><button type="button" id="dawgSound" aria-label="Dawg sounds" aria-pressed="false"></button></div><div id="dawgFig" title="Click me, or drag me"></div></aside>';
     while (host.firstChild) document.body.appendChild(host.firstChild);
     box = $("dawgbox"); fig = $("dawgFig"); bub = $("bubble"); bt = $("bubbleText");
     fig.innerHTML = dawgSVG(150, "idle");
-    document.querySelectorAll("[data-dawg]").forEach(el => { el.innerHTML = dawgSVG(+el.dataset.dawg, el.dataset.mood || "idle"); });
     bt.textContent = "Hi, I'm Dawg! I sniff every payment before it gets charged.";
+    quietT = setTimeout(() => box.classList.add("quiet"), 12000);
     setSound(soundOn, true);
     if (soundOn) ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, preload, { once: true, passive: true }));
     $("dawgSound").addEventListener("click", e => { e.stopPropagation(); setSound(!soundOn); });

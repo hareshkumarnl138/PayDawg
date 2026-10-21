@@ -1,0 +1,494 @@
+{
+  "info": {
+    "name": "PayDawg API",
+    "_postman_id": "6c1c2f0a-3f1e-4e55-9d2a-7a1c0d9e2b11",
+    "description": "PayDawg's public API: create a payment and see Dawg's verdict (Wag = charge, Growl = hold for review, Bark = block), then use the merchant console endpoints.\n\nSet the collection variable baseUrl to your server (http://127.0.0.1:8000 locally, or your Render URL). Set adminToken only if the server has ADMIN_TOKEN.\n\nIn mock mode everything is SIMULATED and settles at once. In PayPal sandbox mode a Wag or Growl waits for a buyer to approve it on PayPal (approval_url), so Capture and Void answer 409 until then.\n\nYou can also import the live OpenAPI description: {{baseUrl}}/openapi.json.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "heldId",
+      "value": ""
+    },
+    {
+      "key": "dupCustomer",
+      "value": ""
+    },
+    {
+      "key": "dupRef",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health and mode",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "description": "Which rail (mock or paypal) and which AI provider the server runs with.",
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"server is up\", () => pm.expect(pm.response.json().ok).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Normal payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "description": "An ordinary purchase from a fresh customer: usually Wag.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchant_id\": \"demo-merchant\",\n  \"amount\": 18.5,\n  \"currency\": \"USD\",\n  \"customer_id\": \"postman-{{$timestamp}}\",\n  \"description\": \"Postman demo purchase\",\n  \"order_ref\": \"PM-{{$timestamp}}-1\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "const p = pm.response.json();",
+              "pm.test(\"Dawg gave a verdict\", () => pm.expect([\"Wag\", \"Growl\", \"Bark\"]).to.include(p.verdict));",
+              "pm.test(\"reasons are explained\", () => pm.expect(p.reasons).to.be.an(\"array\").that.is.not.empty);",
+              "pm.collectionVariables.set(\"paymentId\", p.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Big payment (held for review)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "description": "$750 is above the review ceiling (HARD_REVIEW_AMOUNT, default 500), so Dawg growls: the money is only authorized and held for the merchant.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchant_id\": \"demo-merchant\",\n  \"amount\": 750,\n  \"currency\": \"USD\",\n  \"customer_id\": \"postman-big-{{$timestamp}}\",\n  \"description\": \"Postman big order\",\n  \"order_ref\": \"PM-{{$timestamp}}-big\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "const p = pm.response.json();",
+              "pm.test(\"Growl\", () => pm.expect(p.verdict).to.eql(\"Growl\"));",
+              "pm.test(\"large_order flag\", () => pm.expect(p.flags).to.include(\"large_order\"));",
+              "pm.collectionVariables.set(\"heldId\", p.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Same order twice: first",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "description": "The first of two identical requests (same customer, amount and order_ref).",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchant_id\": \"demo-merchant\",\n  \"amount\": 9.99,\n  \"currency\": \"USD\",\n  \"customer_id\": \"{{dupCustomer}}\",\n  \"description\": \"Double-clicked Pay\",\n  \"order_ref\": \"{{dupRef}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set(\"dupCustomer\", \"postman-twice-\" + Date.now());",
+              "pm.collectionVariables.set(\"dupRef\", \"PM-dup-\" + Date.now());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"not blocked\", () => pm.expect(pm.response.json().verdict).to.not.eql(\"Bark\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Same order twice: second (Bark)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "description": "The same order again within 2 minutes, with a new Idempotency-Key: an exact duplicate, so Dawg barks and nothing is charged.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchant_id\": \"demo-merchant\",\n  \"amount\": 9.99,\n  \"currency\": \"USD\",\n  \"customer_id\": \"{{dupCustomer}}\",\n  \"description\": \"Double-clicked Pay\",\n  \"order_ref\": \"{{dupRef}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "const p = pm.response.json();",
+              "pm.test(\"Bark\", () => pm.expect(p.verdict).to.eql(\"Bark\"));",
+              "pm.test(\"exact_duplicate flag\", () => pm.expect(p.flags).to.include(\"exact_duplicate\"));",
+              "pm.test(\"blocked\", () => pm.expect(p.status).to.eql(\"blocked\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List payments",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Admin-Token",
+            "value": "{{adminToken}}",
+            "description": "Only needed when the server has ADMIN_TOKEN set."
+          }
+        ],
+        "description": "The merchant console's list (newest first) with totals over all payments.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments?limit=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test(\"payments and totals\", () => { pm.expect(body.payments).to.be.an(\"array\"); pm.expect(body.totals.all).to.be.at.least(body.payments.length); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "One payment with its event trail",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Admin-Token",
+            "value": "{{adminToken}}",
+            "description": "Only needed when the server has ADMIN_TOKEN set."
+          }
+        ],
+        "description": "Every status change of one payment.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments/{{paymentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{paymentId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"has events\", () => pm.expect(pm.response.json().events).to.be.an(\"array\").that.is.not.empty);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dawg's Notebook",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Admin-Token",
+            "value": "{{adminToken}}",
+            "description": "Only needed when the server has ADMIN_TOKEN set."
+          }
+        ],
+        "description": "What Dawg has learned about the shop (usual basket, hours, pace) and the limits in force now.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/notebook",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "notebook"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"has a surge level\", () => pm.expect(pm.response.json().surge_above).to.be.a(\"number\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Capture the held payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Admin-Token",
+            "value": "{{adminToken}}",
+            "description": "Only needed when the server has ADMIN_TOKEN set."
+          }
+        ],
+        "description": "The merchant approves the held Growl, so the authorized money is captured. In PayPal mode this answers 409 until the buyer has approved the order on PayPal.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments/{{heldId}}/approve",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{heldId}}",
+            "approve"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"captured, or waiting for the buyer at PayPal\", () => {",
+              "  pm.expect([200, 409]).to.include(pm.response.code);",
+              "  if (pm.response.code === 200) pm.expect(pm.response.json().status).to.eql(\"captured\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Void a held payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Admin-Token",
+            "value": "{{adminToken}}",
+            "description": "Only needed when the server has ADMIN_TOKEN set."
+          }
+        ],
+        "description": "Releases a held Growl without charging. After the capture above it answers 409 (only held payments can be voided); create a new big payment to try it.",
+        "url": {
+          "raw": "{{baseUrl}}/v1/payments/{{heldId}}/void",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "payments",
+            "{{heldId}}",
+            "void"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"voided, or nothing left to void\", () => pm.expect([200, 409]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

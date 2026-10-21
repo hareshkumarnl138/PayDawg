@@ -204,7 +204,7 @@ def test_long_standing_customer_is_not_new_after_100_other_payments(client):
 def test_odd_hour_uses_the_merchant_timezone_hook(monkeypatch):
     from app.screening import rules
     base = {'merchant_id': 'demo-merchant', 'amount': 20, 'customer_id': 'c', 'created_at': datetime.now(timezone.utc).isoformat()}
-    nb = {'payment_count': 0, 'average_amount': 0, 'max_amount': 0}
+    nb = {'payment_count': 20, 'average_amount': 20, 'max_amount': 20}   # enough sales for Dawg to judge hours
     monkeypatch.setattr(rules, '_now', lambda: datetime(2026, 1, 5, 3, 0, tzinfo=timezone.utc))
     assert 'odd_hour' in rules.evaluate_rules(base, nb, [])['flags']
     monkeypatch.setattr(rules, '_now', lambda: datetime(2026, 1, 5, 12, 0, tzinfo=timezone.utc))

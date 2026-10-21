@@ -62,8 +62,20 @@ def test_learning_only_adds_hours():
 def test_evening_shop_is_not_flagged_at_its_busy_hour(monkeypatch):
     payment = {"merchant_id": "m", "amount": 20, "customer_id": "c", "created_at": at(20).isoformat()}
     monkeypatch.setattr(rules, "_now", lambda: at(20, 30))
-    assert "odd_hour" in rules.evaluate_rules(payment, {}, [])["flags"]
-    assert "odd_hour" not in rules.evaluate_rules(payment, {"hour_counts": counts(h20=5)}, [])["flags"]
+    known = {"payment_count": nb.HOURS_NEED, "average_amount": 20, "max_amount": 20}
+    assert "odd_hour" in rules.evaluate_rules(payment, known, [])["flags"]
+    assert "odd_hour" not in rules.evaluate_rules(payment, {**known, "hour_counts": counts(h20=5)}, [])["flags"]
+
+
+def test_a_brand_new_shop_is_not_judged_on_the_hour(monkeypatch):
+    # With no sales yet there are no "usual hours" to compare with, so a normal evening order is not flagged
+    # (it used to be: new customer 20 + odd hour 20 = a Growl for every first-time evening customer).
+    payment = {"merchant_id": "m", "amount": 20, "customer_id": "c", "created_at": at(21).isoformat()}
+    monkeypatch.setattr(rules, "_now", lambda: at(21, 15))
+    young = {"payment_count": nb.HOURS_NEED - 1, "average_amount": 20, "max_amount": 20}
+    assert "odd_hour" not in rules.evaluate_rules(payment, young, [])["flags"]
+    assert rules.evaluate_rules(payment, young, [])["risk_level"] == "low"
+    assert "odd_hour" in rules.evaluate_rules(payment, {**young, "payment_count": nb.HOURS_NEED}, [])["flags"]
 
 
 def test_hours_text():

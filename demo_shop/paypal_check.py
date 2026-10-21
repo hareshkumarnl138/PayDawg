@@ -1,7 +1,7 @@
 """Guided check of the REAL PayPal sandbox flow (needs PAYPAL_MODE=paypal and sandbox credentials in .env).
 
   python demo_shop/paypal_check.py wag     a small payment from a new customer  -> expect Wag, captured
-  python demo_shop/paypal_check.py growl   then a big one from another customer -> expect Growl, held
+  python demo_shop/paypal_check.py growl   then a big one ($750) from another customer -> expect Growl, held
   python demo_shop/paypal_check.py bark    the same order sent twice            -> expect Bark, blocked
 
 Run `wag` first so the shop has history, then `growl`. Use USD: a sandbox account usually cannot take INR.
@@ -58,7 +58,7 @@ def follow(p):
         for _ in range(100):
             time.sleep(3)
             p = call('GET', '/v1/payments/' + p['id'])
-            if p['status'] != 'screened':
+            if p['status'] not in ('screened', 'approved'):   # 'approved' = PayPal sent the buyer back, Dawg is finishing
                 break
         else:
             print('Still waiting for approval. Check the browser, then look at the dashboard.')
@@ -78,7 +78,8 @@ if __name__ == '__main__':
     if mode == 'wag':
         follow(pay(11, 'sandbox-regular', 'sbx-' + stamp))
     elif mode == 'growl':
-        follow(pay(500, 'sandbox-newcomer-' + stamp[-4:], 'sbx-' + stamp))
+        # Above the default review ceiling (HARD_REVIEW_AMOUNT=500), so it is held whatever the shop has learned.
+        follow(pay(750, 'sandbox-newcomer-' + stamp[-4:], 'sbx-' + stamp))
     elif mode == 'bark':
         pay(7, 'sandbox-twice', 'sbx-dup-' + stamp)
         follow(pay(7, 'sandbox-twice', 'sbx-dup-' + stamp))

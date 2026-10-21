@@ -17,6 +17,8 @@ OUTCOMES = {
     "error": ("tired", "Dawg tripped over a cable.", "PayPal approved your payment, but the last step did not finish. Please do not pay twice: contact the shop."),
 }
 
+PAW_ICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='%23c88a4e'%3E%3Cellipse cx='32' cy='42' rx='15' ry='13'/%3E%3Ccircle cx='13' cy='26' r='7'/%3E%3Ccircle cx='25' cy='13' r='7'/%3E%3Ccircle cx='39' cy='13' r='7'/%3E%3Ccircle cx='51' cy='26' r='7'/%3E%3C/g%3E%3C/svg%3E")
+
 _CSS = (
     ":root{--bg:#fbf6ee;--card:#fff;--ink:#2b2118;--muted:#6b5a48;--accent:#c88a4e;--line:#ead9c0}"
     "@media(prefers-color-scheme:dark){:root{--bg:#1d1812;--card:#2a231a;--ink:#f3e8d6;--muted:#bfae95;--line:#403525}}"
@@ -47,6 +49,7 @@ def result_page(outcome: str, payment: dict | None = None, back_url: str | None 
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>PayDawg &mdash; {escape(headline)}</title>"
         '<link rel="stylesheet" href="/dashboard/dawg.css">'
+        f'<link rel="icon" href="{PAW_ICON}">'
         f"<style>{_CSS}</style></head><body>"
         '<main class="card"><div class="brand">PayDawg</div>'
         f'<div data-dawg="190" data-mood="{escape(mood)}" aria-hidden="false"></div>'

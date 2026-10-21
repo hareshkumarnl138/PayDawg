@@ -1,4 +1,4 @@
-"""Optional LLM analysis with schema validation, one retry, and safe fallback."""
+"""Optional LLM analysis with schema validation, one retry for a bad answer, and safe fallback."""
 import json
 import logging
 import httpx
@@ -53,6 +53,11 @@ async def analyze(payment: dict, baseline: dict, flags: list[str]) -> dict:
                 result = json.loads(result)
             analysis = LLMAnalysis.model_validate(result)
             return {"analysis": analysis.model_dump(), "decision_source": provider}
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            # A model that is off or too slow will not be faster a second later: asking again only doubled the
+            # buyer's wait (LLM_TIMEOUT_SECONDS each time). Only an unreadable answer is worth a second try.
+            logger.warning("LLM %s unreachable or too slow (%s); falling back to rules only", provider, type(exc).__name__)
+            break
         except Exception as exc:
             # Log only the error type: the request carries customer data and must not be echoed.
             logger.warning("LLM %s attempt %d failed (%s); %s", provider, _attempt + 1, type(exc).__name__,

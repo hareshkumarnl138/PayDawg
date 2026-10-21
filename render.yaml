@@ -1,0 +1,31 @@
+# Render Blueprint: one click deploys PayDawg as a web service (New > Blueprint, pick this repo).
+# The free plan sleeps when idle (the first visit then takes up to a minute) and its disk is wiped on every
+# restart or deploy, so the SQLite database starts empty each time. Fine for a demo, never for real money.
+services:
+  - type: web
+    name: paydawg
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # TRUST_PROXY_HEADERS below makes the flood guard see each visitor's address behind Render's proxy.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PAYPAL_MODE
+        value: paypal
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      # Sandbox credentials from developer.paypal.com (Apps & Credentials, Sandbox). Render asks for them.
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # PUBLIC_BASE_URL is not needed here: PayDawg uses the RENDER_EXTERNAL_URL that Render sets.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: MERCHANT_TIMEZONE
+        value: Asia/Kolkata
+      - key: DATABASE_PATH
+        value: /tmp/paydawg.sqlite3

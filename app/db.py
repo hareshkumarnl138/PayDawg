@@ -113,6 +113,24 @@ def update_status(db, payment_id, status, event_type, payload=None):
     add_event(db, payment_id, event_type, old, status, payload)
     return status
 
+def update_status_if(db, payment_id, expected, status, event_type, payload=None):
+    """Move a payment to `status` only if it is still in one of the `expected` statuses (compare-and-swap).
+
+    Used where another request may have moved the payment meanwhile (a capture racing a void, a retried capture),
+    so a late failure can never overwrite a newer, real result. Returns True when the payment was moved.
+    """
+    expected = list(expected)
+    marks = ",".join("?" * len(expected))
+    row = db.execute(f"SELECT status FROM payments WHERE id=? AND status IN ({marks})", (payment_id, *expected)).fetchone()
+    if not row:
+        return False
+    moved = db.execute(f"UPDATE payments SET status=?, updated_at=? WHERE id=? AND status IN ({marks})",
+                       (status, utc_now(), payment_id, *expected))
+    if moved.rowcount != 1:
+        return False
+    add_event(db, payment_id, event_type, row["status"], status, payload)
+    return True
+
 def payment_dict(row):
     if row is None:
         return None
@@ -135,18 +153,19 @@ def mark_captured(db, payment_id, event_type, payload=None):
     update_status(db, payment_id, "captured", event_type, payload)
     if first_capture:
         learned = row["amount"]
-        if row["verdict"] == "Growl":
-            # A merchant-approved outlier teaches the Notebook only up to the "unusual" limit, so one big
-            # approved payment cannot make every later big payment look normal.
+        try:
+            flags = json.loads(row["flags_json"] or "[]")
+        except ValueError:
+            flags = []
+        if row["verdict"] == "Growl" or {"unusual_amount", "large_order"} & set(flags):
+            # An outlier teaches the Notebook only up to the "unusual" limit, so one big payment (approved by the
+            # merchant, or let through because a trusted customer made it) cannot make every later big payment
+            # look normal: "twice the biggest" would otherwise jump with it.
             book = db.execute("SELECT payment_count, average_amount FROM notebook WHERE merchant_id=?", (row["merchant_id"],)).fetchone()
             if book and book["payment_count"]:
                 learned = min(learned, max(book["average_amount"], 1.0) * settings.large_amount_multiple)
         # Pace is the shop's normal flow: a payment that was part of a surge, or captured long after it
         # arrived (a merchant clearing held payments), does not teach it.
-        try:
-            flags = json.loads(row["flags_json"] or "[]")
-        except ValueError:
-            flags = []
         now = datetime.now(timezone.utc)
         arrived = nb.parse_time(row["created_at"]) or now
         teach_pace = "merchant_surge" not in flags and (now - arrived).total_seconds() <= nb.window_seconds()

@@ -1,7 +1,7 @@
-"""Tiny in-memory rate limiter: too many payment attempts tire the Dawg out.
+"""Tiny in-memory rate limiter (flood guard) for payment attempts.
 
 A client (identified by IP address) may send RATE_LIMIT_ATTEMPTS payment requests inside
-RATE_LIMIT_WINDOW_SECONDS. The next one puts the Dawg to sleep for RATE_LIMIT_LOCK_SECONDS and
+RATE_LIMIT_WINDOW_SECONDS. The next one locks that client out for RATE_LIMIT_LOCK_SECONDS and
 every request in that time gets HTTP 429 with a Retry-After header. Real gateways do the same to
 slow down card-testing bots and runaway clients. Set RATE_LIMIT_ATTEMPTS=0 to switch it off.
 
@@ -100,7 +100,8 @@ limiter = RateLimiter()
 def client_key(request) -> str:
     """Which client an attempt is charged to.
 
-    Forwarded headers are only honoured when TRUST_PROXY_HEADERS is set, because anyone can send one.
+    Forwarded headers are only honoured when TRUST_PROXY_HEADERS is set, because anyone can send one; then the
+    address your proxy appended (the last one) is used, never one the client wrote itself.
     Note that uvicorn rewrites request.client itself when its own --proxy-headers is active (it is by
     default, for peers in --forwarded-allow-ips), so run it with --no-proxy-headers unless a proxy you
     control sits in front. The shop-wide ceiling limits the damage either way.
@@ -108,5 +109,7 @@ def client_key(request) -> str:
     if settings.trust_proxy_headers:
         forwarded = request.headers.get("x-forwarded-for", "")
         if forwarded:
-            return forwarded.split(",")[0].strip()[:64] or "unknown"
+            # The LAST address is the one your proxy added. Earlier ones were sent by the client and can be anything,
+            # so reading the first one let a client pick a fresh rate-limit identity per request.
+            return forwarded.split(",")[-1].strip()[:64] or "unknown"
     return request.client.host if request.client else "unknown"

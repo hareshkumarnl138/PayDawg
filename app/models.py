@@ -63,7 +63,15 @@ class PaymentCreate(BaseModel):
             raise ValueError(f"{info.field_name} must not be blank")
         return value
 
-    @field_validator("description", "order_ref", mode="before")
+    @field_validator("description", mode="before")
+    @classmethod
+    def _description(cls, value):
+        """A blank or missing description is not an error: the payment is simply called "Payment"."""
+        if value is None:
+            return "Payment"
+        return clean_text(value, "description") or "Payment"
+
+    @field_validator("order_ref", mode="before")
     @classmethod
     def _optional_text(cls, value, info):
         if value is None:

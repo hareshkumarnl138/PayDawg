@@ -85,12 +85,12 @@ def test_bulk_order_of_four_is_not_unusual():
 def test_one_soft_flag_alone_stays_low_and_two_review():
     only_new = evaluate_rules(payment(20, 'new'), ALL_HOURS, [])
     assert only_new['risk_level'] == 'low'
-    night = dict(ALL_HOURS, active_hours=[])
+    night = dict(ALL_HOURS, active_hours=[], payment_count=20)   # enough sales for Dawg to judge the hour
     both = evaluate_rules(payment(20, 'new'), night, [])
     assert both['risk_level'] == 'medium'
 
 def test_returning_customer_lowers_score():
-    night = dict(ALL_HOURS, active_hours=[])
+    night = dict(ALL_HOURS, active_hours=[], payment_count=20)   # enough sales for Dawg to judge the hour
     earlier = payment(20, 'c1', created_at=(datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(), status='captured')
     result = evaluate_rules(payment(20, 'c1', order_ref='x'), night, [earlier])
     assert result['risk_score'] == 0 or result['risk_level'] == 'low'

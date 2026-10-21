@@ -23,10 +23,13 @@
 #bubble:after{content:"";position:absolute;right:56px;bottom:-14px;border:8px solid transparent;border-top-color:#edf1f7}
 #dawgSound{position:absolute;top:-13px;right:-13px;width:30px;height:30px;padding:0;border-radius:50%;border:2px solid #8bd5ff;background:#0b1020;color:#edf1f7;font-size:14px;line-height:1;cursor:pointer;box-shadow:0 4px 12px #0008}#dawgSound:hover{border-color:#fff}#dawgSound:focus-visible{outline:3px solid #fff;outline-offset:2px}
 #bubble.wag{border-color:#83e4c6}#bubble.growl{border-color:#ffd58b}#bubble.bark{border-color:#ff9db0}
+/* quiet: after a while the bubble folds away so it does not cover the page; the mute button stays */
+#dawgbox.quiet #bubble{min-height:0;height:0;padding:0;border-width:0;box-shadow:none;background:transparent;pointer-events:none}
+#dawgbox.quiet #bubble:after,#dawgbox.quiet #bubbleText{display:none}
+#dawgbox.quiet #dawgSound{pointer-events:auto;top:-6px;right:4px}
 #dawgFig{cursor:pointer;filter:drop-shadow(0 8px 14px #0009);margin-right:12px}
 .dctrl{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .dctrl button{font-size:11px;padding:6px 9px;background:#11182bee}
-body{padding-bottom:300px}
 @media(max-width:520px){#dawgFig svg{width:120px;height:126px}}
 
 #dawgbox{transform:translate(var(--dx,0px),var(--dy,0px));transition:transform .9s cubic-bezier(.25,1.25,.5,1)}

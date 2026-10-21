@@ -6,8 +6,9 @@ Three things are learned, so the rules judge a payment against THIS shop's norma
   * pace         - the shop's busiest normal 10 minutes (the "shop-wide surge" rule)
 
 Only money that was really captured teaches the Notebook, so blocked, held or abandoned payments cannot
-shift what "normal" means. A brand-new shop has learned nothing yet and is judged by the configured
-defaults (ACTIVE_HOURS 9-18, MERCHANT_SURGE_LIMIT), exactly as before the Notebook learned hours and pace.
+shift what "normal" means. A brand-new shop has learned nothing yet: it is judged by the configured
+surge level (MERCHANT_SURGE_LIMIT), and Dawg only starts calling an hour odd once he has seen HOURS_NEED captured
+payments (then against the default 09:00-18:59 plus every hour the shop has proven busy in).
 """
 import json
 import math
@@ -18,6 +19,7 @@ from app.config import settings
 DEFAULT_ACTIVE_HOURS = list(range(9, 19))
 HOUR_MIN_COUNT = 3        # an hour becomes "usual" once it has this many captured payments...
 HOUR_MIN_SHARE = 0.02     # ...and at least this share of all captured payments
+HOURS_NEED = 20           # captured payments Dawg needs before he judges the hour of a payment at all
 PACE_MULTIPLE = 2         # a surge is this many times the shop's busiest normal window
 PACE_DECAY = 0.995        # per window: an old busy spell fades to about half within a day
 
@@ -74,6 +76,12 @@ def learned_hours(notebook: dict) -> set[int]:
     if not total:
         return set()
     return {h for h, c in enumerate(counts) if c >= HOUR_MIN_COUNT and c >= HOUR_MIN_SHARE * total}
+
+
+def judges_hours(notebook: dict) -> bool:
+    """Has Dawg seen enough sales to call an hour odd for THIS shop? A brand-new online shop has no "usual hours"
+    yet, and flagging everything outside 09:00-18:59 held perfectly normal evening orders from new customers."""
+    return int(notebook.get("payment_count", 0) or 0) >= HOURS_NEED
 
 
 def usual_hours(notebook: dict) -> set[int]:
@@ -178,6 +186,8 @@ def summary(notebook: dict, now: datetime, recent_count: int) -> dict:
         "learned_hours": sorted(learned_hours(notebook)),
         "added_hours": sorted(learned_hours(notebook) - configured_hours(notebook)),
         "now_hour": now.hour,
+        "hours_judged": judges_hours(notebook),
+        "hours_need": HOURS_NEED,
         "busiest_window": round(learned_peak(notebook, now), 1),
         "surge_above": surge_limit(notebook, now),
         "surge_floor": settings.merchant_surge_limit,

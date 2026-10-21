@@ -76,6 +76,16 @@ async def test_server_error_and_timeout_fall_back(ollama):
 
 
 @pytest.mark.asyncio
+async def test_a_slow_or_missing_model_is_not_asked_twice(ollama):
+    # A second try after a timeout doubled how long the buyer waited, and a slow model is no faster a moment later.
+    for exc in (httpx.ReadTimeout("slow"), httpx.ConnectError("Ollama is not running")):
+        ollama.calls.clear()
+        ollama.raise_exc = exc
+        assert (await llm.analyze(PAY, NOTEBOOK, []))["decision_source"] == "rules-only"
+        assert len(ollama.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_second_attempt_can_succeed(ollama):
     ollama.reply = ["not json", json.dumps({"risk_level": "low", "reasons": ["Fine."]})]
     out = await llm.analyze(PAY, NOTEBOOK, [])
