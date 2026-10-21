@@ -1,15 +1,25 @@
-Dawg's real dog sounds go in this folder (optional).
+Dawg's sounds
+=============
 
-Name the files like this. Any of .ogg .wav .mp3 .m4a works, and a missing file simply keeps the built-in sound:
+The dashboard plays these recordings for the three verdicts:
 
-  bark.wav     played for Bark
-  growl.ogg    played for Growl
-  happy.wav    played for Wag (happy)
+  bark.wav    Bark  - blocked
+  growl.mp3   Growl - held for review
+  happy.wav   Wag   - charged
 
-Only use sounds you may use: public domain / CC0, or your own recordings. Keep each file small (a few seconds).
-Dawg plays at most about 2 seconds of each, with a quick fade out.
+Accepted names: bark, growl, happy. Accepted types: .ogg, .wav, .mp3, .m4a.
+Replace any file with another recording of the same name to change a sound.
+If a file is missing, PayDawg falls back to sounds it synthesises in the browser.
 
-Good CC0 sources: opengameart.org (search "dog"), freesound.org (filter by license "Creative Commons 0").
-Credit the author below if their license asks for it (CC0 does not).
+Browsers only allow sound after the page has been clicked once.
 
-Credits:
+Credits
+-------
+
+bark.wav  - six barks cut from "dog sounds" by pauliuw, joined with short gaps.
+            https://opengameart.org/content/dog-sounds  (CC0 1.0, public domain)
+
+happy.wav - three whines cut from the same pack, reordered and pitched up slightly.
+            https://opengameart.org/content/dog-sounds  (CC0 1.0, public domain)
+
+growl.mp3 - SOURCE AND LICENCE: fill in before publishing (author, link, licence).
