@@ -115,7 +115,7 @@
       case "paid": message = "Paid" + sim + ". Order " + d.order + " is confirmed."; break;
       case "held": message = "Order " + d.order + " is waiting for the shop to confirm it. " + total +
         " is reserved on your payment method but has not been charged" + sim + "."; break;
-      case "declined": message = "This payment could not be completed, so nothing was charged. Check your order, or contact the shop if it keeps happening."; break;
+      case "declined": message = "Woof! Dawg barked at this order and stopped it, so nothing was charged. Check your order, or contact the shop if it keeps happening."; break;
       case "busy": message = "Too many payment attempts from your connection. Try again in " + (d.retry_after || 15) + " seconds."; break;
       case "unavailable": case "offline": message = "The payment service did not respond, so nothing was charged. Try again in a moment."; break;
       case "invalid": message = d.detail || "Something in this order could not be processed. Refresh the page and try again."; state.attempt = null; break;

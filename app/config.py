@@ -45,6 +45,11 @@ class Settings:
     # Only true behind a proxy you control; otherwise a forged X-Forwarded-For would get its own quota.
     trust_proxy_headers: bool = _bool("TRUST_PROXY_HEADERS", False)
     merchant_surge_limit: int = int(os.getenv("MERCHANT_SURGE_LIMIT", "15"))
+    # Any single payment above this is held for the shop to review (Growl), even for a brand-new shop. 0 disables.
+    hard_review_amount: float = float(os.getenv("HARD_REVIEW_AMOUNT", "500"))
+    # PayPal mode only. after_approval: a Bark buyer still sees PayPal's approve screen, then Dawg stops the payment
+    # (no authorization or capture is ever made, so no money moves). before_paypal: Bark never reaches PayPal.
+    bark_stage: str = os.getenv("BARK_STAGE", "after_approval").strip().lower()
 
 
 settings = Settings()

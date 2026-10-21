@@ -126,7 +126,8 @@ def test_paypal_mode_bark_never_reaches_paypal(client, monkeypatch):
         return {"id": f"ORDER-{len(calls)}", "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/x"}]}
 
     monkeypatch.setattr(pp.PayPalRail, "_request", fake_request)
-    with override(rail_provider="paypal", paypal_client_id="id", paypal_client_secret="secret", rate_limit_attempts=0):
+    with override(rail_provider="paypal", paypal_client_id="id", paypal_client_secret="secret", rate_limit_attempts=0,
+                  bark_stage="before_paypal"):
         replies = [order(client, [("ball", 1)], email="loop@example.com", attempt=f"attempt-p{i:04d}").json()
                    for i in range(6)]
     assert replies[5]["outcome"] == "declined" and len(calls) == 5

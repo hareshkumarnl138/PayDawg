@@ -6,7 +6,8 @@ Hard blocks (the LLM can never override these):
                  A different order_ref means a new purchase, so repeat buying is fine.
   * velocity   - one customer making too many payments inside the velocity window.
 Soft signals add to a 0-100 risk score (>= 40 means review, i.e. Growl):
-  unusual_amount 50, merchant_surge 40, new_customer 20, odd_hour 20, and -20 for a customer
+  unusual_amount 50, large_order 50 (above HARD_REVIEW_AMOUNT, never discounted), merchant_surge 40,
+  new_customer 20, odd_hour 20, and -20 for a customer
   who already has a captured payment (trusted repeat customer).
 
 "Unusual", "odd hour" and "surge" are judged against what Dawg's Notebook has learned about this shop
@@ -17,7 +18,7 @@ from zoneinfo import ZoneInfo
 from app.config import settings
 from app.notebook import surge_limit, unusual_above, usual_hours
 
-WEIGHTS = {"unusual_amount": 50, "merchant_surge": 40, "new_customer": 20, "odd_hour": 20}
+WEIGHTS = {"unusual_amount": 50, "merchant_surge": 40, "new_customer": 20, "odd_hour": 20, "large_order": 50}
 TRUSTED_DISCOUNT = 20
 REVIEW_THRESHOLD = 40
 
@@ -79,6 +80,10 @@ def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -
     if unusual_limit is not None and amount > unusual_limit:
         flags.append("unusual_amount")
         reasons.append("Amount is far above this merchant's recorded payment baseline.")
+    ceiling = settings.hard_review_amount
+    if ceiling > 0 and amount > ceiling:
+        flags.append("large_order")
+        reasons.append(f"Single payment above the shop's review ceiling of {ceiling:,.2f}: held for the shop to confirm.")
     surge_at = surge_limit(notebook, now)
     if merchant_velocity >= surge_at:
         flags.append("merchant_surge")
@@ -96,6 +101,8 @@ def evaluate_rules(payment: dict, notebook: dict, recent_payments: list[dict]) -
     if trusted and score:
         score = max(0, score - TRUSTED_DISCOUNT)
         reasons.append("Returning customer with a captured payment: risk score reduced.")
+    if "large_order" in flags and not hard_block:
+        score = max(score, REVIEW_THRESHOLD)   # a returning-customer discount can never wave a huge payment through
     if hard_block:
         score = 100
         level = "high"

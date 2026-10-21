@@ -184,6 +184,21 @@ async def settle_buyer_approval(payment: dict, success_event: str, failure_event
 def dashboard():
     return FileResponse(DASHBOARD / "index.html")
 
+SOUND_NAMES = {"bark": "bark", "growl": "growl", "wag": "happy", "tired": "whine", "sleep": "snore"}
+SOUND_TYPES = ("ogg", "wav", "mp3", "m4a")
+
+@app.get("/dog-sounds", include_in_schema=False)
+def dog_sounds():
+    """Which of Dawg's real recordings exist in dashboard/sounds/ (mood -> file name). The page loads only
+    these, so a missing recording costs nothing and Dawg keeps his built-in sound for it."""
+    found = {}
+    for mood, name in SOUND_NAMES.items():
+        for ext in SOUND_TYPES:
+            if (DASHBOARD / "sounds" / f"{name}.{ext}").is_file():
+                found[mood] = f"{name}.{ext}"
+                break
+    return found
+
 @app.get("/v1/rate-limit")
 def rate_limit_status(request: Request):
     """Is this client currently locked out? The dashboard polls this so the Dawg can sleep on cue."""
@@ -303,14 +318,23 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
         add_event(db, pid, "payment.created", None, "created", {"amount": body.amount, "currency": body.currency.upper()})
         update_status(db, pid, status, "payment.screened",
                       {"verdict": decision["verdict"], "reasons": decision["reasons"], "decision_source": decision["decision_source"]})
-        if status == "blocked":
+        barked = status == "blocked"
+        if barked and not (settings.rail_provider == "paypal" and settings.bark_stage == "after_approval"):
             return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
         stored = dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
-    intent = "AUTHORIZE" if decision["verdict"] == "Growl" else "CAPTURE"
+    # A Bark payment (BARK_STAGE=after_approval) still gets a PayPal order so the buyer sees the approve screen,
+    # but it is only ever approved, never authorized or captured: when PayPal sends the buyer back, Dawg stops it
+    # and no money moves. AUTHORIZE is used so that even a stray capture attempt has nothing to capture.
+    intent = "AUTHORIZE" if decision["verdict"] in ("Growl", "Bark") else "CAPTURE"
     try:
         result = await get_rail().create({**stored, "return_url": settings.public_base_url + "/paypal/return",
                                           "cancel_url": settings.public_base_url + "/paypal/cancel"}, intent)
     except Exception as exc:
+        if barked:
+            # The payment is already blocked and nothing was sent to PayPal: simply decline it.
+            with db_session() as db:
+                add_event(db, pid, "rail.order_skipped", "blocked", "blocked", {"error": str(exc)[:200]})
+                return payment_dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
         with db_session() as db:
             update_status(db, pid, "failed", "rail.create_failed", {"error": str(exc)[:200]})
         raise HTTPException(502, "Payment rail could not create the order.") from exc
@@ -319,6 +343,8 @@ async def create_payment(body: PaymentCreate, request: Request, response: Respon
                    (result.get("order_id"), result.get("approval_url"), datetime.now(timezone.utc).isoformat(), pid))
         add_event(db, pid, "rail.order_created", status, status, {"rail": settings.rail_provider, "intent": intent, "simulated": result.get("simulated", False)})
         stored = dict(db.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone())
+    if status == "blocked":
+        return payment_dict(stored)
     if result.get("simulated") and not result.get("approval_url"):
         # SIMULATED: mock mode has no real buyer, so the buyer-approval step is simulated here.
         # Wag is captured and Growl is held, exactly as the PayPal return route would do.
@@ -447,11 +473,30 @@ async def paypal_return(request: Request, token: str):
                 return HTMLResponse(buyer_page("notfound"), status_code=404)
             raise HTTPException(404, "PayPal order was not found.")
         payment = dict(row)
-        if payment["status"] not in {"screened"}:
+        if payment["status"] == "blocked":
+            # Dawg barked at this payment before PayPal: the buyer approved an order that is never authorized or
+            # captured, so nothing is charged. Record that once and tell the buyer.
+            if not db.execute("SELECT 1 FROM events WHERE payment_id=? AND event_type='paypal.buyer_returned_blocked'",
+                              (payment["id"],)).fetchone():
+                add_event(db, payment["id"], "paypal.buyer_returned_blocked", "blocked", "blocked", {"order_id": token})
+            if html:
+                return HTMLResponse(buyer_page("barked", payment))
+            return {"payment_id": payment["id"], "status": "blocked", "verdict": payment["verdict"],
+                    "message": "Dawg stopped this payment. Nothing was charged."}
+        if payment["status"] != "screened":
             if html:
                 outcome = payment["status"] if payment["status"] in {"captured", "held"} else "processed"
                 return HTMLResponse(buyer_page(outcome, payment))
             return {"payment_id": payment["id"], "status": payment["status"], "message": "Payment already processed."}
+        # Claim the payment before touching the rail, so a refresh or a second tab on this page cannot
+        # capture or authorize the same order twice. The loser sees "already processed".
+        claimed = db.execute("UPDATE payments SET status='approved', updated_at=? WHERE id=? AND status='screened'",
+                             (utc_now(), payment["id"]))
+        if claimed.rowcount != 1:
+            if html:
+                return HTMLResponse(buyer_page("processed", payment))
+            return {"payment_id": payment["id"], "status": "approved", "message": "Payment already processed."}
+        add_event(db, payment["id"], "paypal.buyer_returned", "screened", "approved", {"order_id": token})
     try:
         status = await settle_buyer_approval(payment, "paypal.buyer_approved", "paypal.return_failed")
     except Exception as exc:
@@ -468,8 +513,10 @@ def paypal_cancel(request: Request, token: str | None = None):
     """Record a buyer-cancelled PayPal checkout without attempting capture."""
     if token:
         with db_session() as db:
-            row = db.execute("SELECT id FROM payments WHERE provider_order_id=?", (token,)).fetchone()
-            if row:
+            row = db.execute("SELECT id, status FROM payments WHERE provider_order_id=?", (token,)).fetchone()
+            # Only a checkout still waiting for the buyer can be cancelled. A captured, held or blocked payment
+            # keeps its status, so a stale or replayed cancel link cannot overwrite a real result.
+            if row and row["status"] == "screened":
                 update_status(db, row["id"], "failed", "paypal.buyer_cancelled", {"order_id": token})
     if wants_html(request):
         return HTMLResponse(buyer_page("cancelled"))

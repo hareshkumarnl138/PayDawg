@@ -1,6 +1,7 @@
-/* PayDawg mascot: a talking German Shepherd who changes face per verdict, trots in to speak, can be
+/* PayDawg mascot: a German Shepherd who changes face per verdict, trots in to speak, can be
    dragged, gets tired from too many attempts and falls asleep behind a "Beware of DAWGS" sign
-   (rate-limit lockdown). Exposes window.Dawg. The speech is best-effort browser text-to-speech. */
+   (rate-limit lockdown). Exposes window.Dawg. Dawg does not talk: he barks, growls and yips. If real recordings are in dashboard/sounds/ he plays those;
+   otherwise he uses sounds synthesized in the browser (Web Audio). */
 (function () {
   "use strict";
   const $ = id => document.getElementById(id);
@@ -54,21 +55,100 @@
   const money = p => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: p.currency }).format(p.amount); } catch (e) { return p.currency + " " + Number(p.amount).toFixed(2); } };
   const why = p => { const w = (p.flags || []).map(f => WHY[f]).filter(Boolean); return w.length ? w.slice(0, 2).join(", and ") : "something about it smells off"; };
 
-  let box, fig, bub, bt, voice = null, typeT = 0, moodT = 0, speakT = 0, home = { x: 0, y: 0 }, lastSlide = 0;
+  let box, fig, bub, bt, typeT = 0, moodT = 0, speakT = 0, home = { x: 0, y: 0 }, lastSlide = 0;
   let lockUntil = 0, lockStart = 0, lockTotal = 15, lockTimer = 0, lockIdx = -1;
 
-  function pickVoice(){ try { const v = speechSynthesis.getVoices(); voice = v.find(x => /^en(-|_)/i.test(x.lang) && /female|samantha|zira|google uk english female|google us english/i.test(x.name)) || v.find(x => /^en/i.test(x.lang)) || null; } catch (e) {} }
-  function speak(text, mood){
-    if (!("speechSynthesis" in window)) return;
+  /* ---- dog sounds: synthesized with Web Audio, so there are no sound files and nothing to license ---- */
+  let ac = null, hum = null, soundOn = true;
+  try { soundOn = localStorage.getItem("dawg-sound") !== "off"; } catch (e) {}
+  function audio(){
+    if (!soundOn) return null;
     try {
-      clearTimeout(speakT); speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.replace(/\.\.\./g, ", ").replace(/[()]/g, ""));
-      if (voice) u.voice = voice;
-      u.lang = (voice && voice.lang) || "en-US";
-      const angry = mood === "growl" || mood === "bark", sleepy = mood === "tired" || mood === "sleep";
-      u.pitch = angry ? 0.8 : sleepy ? 0.95 : 1.3; u.rate = mood === "bark" ? 1.15 : sleepy ? 0.9 : 1.02;
-      speakT = setTimeout(() => { try { speechSynthesis.speak(u); } catch (e) {} }, 80);
-    } catch (e) {}
+      const C = window.AudioContext || window.webkitAudioContext; if (!C) return null;
+      if (!ac) ac = new C();
+      if (ac.state === "suspended") ac.resume().catch(() => {});   // browsers wait for a click or key before allowing sound
+      return ac.state === "closed" ? null : ac;
+    } catch (e) { return null; }
+  }
+  function noise(a, t, dur, gain, freq, q){
+    const len = Math.max(1, Math.floor(a.sampleRate * dur)), buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+    src.buffer = buf; f.type = "bandpass"; f.frequency.value = freq; f.Q.value = q;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(a.destination); src.start(t); src.stop(t + dur + 0.02);
+  }
+  function tone(a, t, o){
+    const osc = a.createOscillator(), f = a.createBiquadFilter(), g = a.createGain();
+    osc.type = o.type || "sawtooth"; osc.frequency.setValueAtTime(o.f0, t); osc.frequency.exponentialRampToValueAtTime(o.f1, t + o.dur);
+    f.type = o.filter || "lowpass"; f.frequency.value = o.cut || 2400; f.Q.value = o.q || 0.8;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain, t + (o.attack || 0.01)); g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+    osc.connect(f); f.connect(g); g.connect(a.destination); osc.start(t); osc.stop(t + o.dur + 0.03);
+    return osc;
+  }
+  const SOUNDS = {
+    // happy: three quick rising yips and a little pant
+    wag(a, t){
+      [0, 0.15, 0.3].forEach((d, i) => { tone(a, t + d, { type: "triangle", f0: 780 + i * 90, f1: 1250 + i * 110, dur: 0.1, gain: 0.22, cut: 3200 }); noise(a, t + d, 0.07, 0.05, 2600, 1.5); });
+      [0.5, 0.68].forEach(d => noise(a, t + d, 0.14, 0.07, 1800, 0.7));
+    },
+    // growl: a low rough rumble that swells and fades
+    growl(a, t){
+      const dur = 1.3, osc = tone(a, t, { f0: 88, f1: 70, dur, gain: 0.34, attack: 0.18, cut: 420, q: 2 });
+      const lfo = a.createOscillator(), depth = a.createGain();
+      lfo.frequency.value = 26; depth.gain.value = 9; lfo.connect(depth); depth.connect(osc.frequency); lfo.start(t); lfo.stop(t + dur + 0.05);
+      noise(a, t, dur, 0.1, 260, 0.9);
+    },
+    // bark: two or three sharp barks, each a fast falling note with a burst of breath
+    bark(a, t){
+      [0, 0.23, 0.46].forEach((d, i) => {
+        tone(a, t + d, { f0: 620 - i * 25, f1: 270, dur: 0.17, gain: 0.4, attack: 0.006, cut: 1700, q: 1.4 });
+        noise(a, t + d, 0.09, 0.2, 1500, 0.9);
+      });
+    },
+    // tired: a soft whine that sags, then slow pants
+    tired(a, t){
+      tone(a, t, { type: "sine", f0: 900, f1: 520, dur: 0.7, gain: 0.16, attack: 0.08, cut: 2000 });
+      [0.85, 1.25, 1.65].forEach(d => noise(a, t + d, 0.3, 0.07, 1500, 0.6));
+    },
+    // asleep: one slow, soft snore
+    sleep(a, t){ noise(a, t, 1.1, 0.09, 220, 0.7); noise(a, t + 0.1, 0.8, 0.05, 110, 0.5); }
+  };
+  /* Real recordings win when they exist: put bark / growl / happy / whine / snore (.ogg .wav .mp3 or .m4a) in
+     dashboard/sounds/. Anything missing keeps its synthesized sound, so the folder can start empty. */
+  const MAX_SECONDS = { bark: 2.4, growl: 2.2, wag: 1.8, tired: 2.2, sleep: 2.5 };
+  const recordings = {};            // mood -> AudioBuffer (a mood with no recording is simply absent)
+  let preloading = false;
+  async function preload(){
+    if (preloading) return; preloading = true;
+    const a = audio(); if (!a || !window.fetch) return;
+    let found = {};
+    try { const r = await fetch("/dog-sounds"); if (r.ok) found = await r.json(); } catch (e) { return; }
+    Object.keys(found).forEach(async mood => {
+      try {
+        const r = await fetch("/dashboard/sounds/" + encodeURIComponent(found[mood]));
+        if (r.ok) recordings[mood] = await a.decodeAudioData(await r.arrayBuffer());
+      } catch (e) { /* not usable audio: keep the built-in sound */ }
+    });
+  }
+  function playRecording(a, mood, t){
+    const buf = recordings[mood]; if (!buf) return false;
+    const src = a.createBufferSource(), g = a.createGain(), len = Math.min(buf.duration, MAX_SECONDS[mood] || 2.4);
+    src.buffer = buf; g.gain.setValueAtTime(0.9, t); g.gain.setValueAtTime(0.9, t + Math.max(0, len - 0.25)); g.gain.linearRampToValueAtTime(0.0001, t + len);
+    src.connect(g); g.connect(a.destination); src.start(t, 0, len);
+    return true;
+  }
+  function speak(text, mood){      // kept under its old name: a mood now makes a dog noise instead of words
+    const a = audio(); if (!a) return;
+    preload();
+    const t = a.currentTime + 0.03;
+    try { if (!playRecording(a, mood, t)) (SOUNDS[mood] || SOUNDS.wag)(a, t); } catch (e) {}
+  }
+  function setSound(on, quiet){
+    soundOn = on;
+    try { localStorage.setItem("dawg-sound", on ? "on" : "off"); } catch (e) {}
+    const b = $("dawgSound"); if (b) { b.textContent = on ? "\u{1F50A}" : "\u{1F507}"; b.setAttribute("aria-pressed", on ? "false" : "true"); b.title = on ? "Mute Dawg" : "Unmute Dawg"; }
+    if (on && !quiet) speak("", "wag");
   }
   function setMood(m){
     document.querySelectorAll("#dawgFig .dawg").forEach(el => { el.setAttribute("class", "dawg mood-" + m + (el.classList.contains("talking") ? " talking" : "")); });
@@ -104,7 +184,6 @@
     lockTotal = total || 15; retryAfter = Math.max(1, retryAfter || lockTotal);
     lockStart = now - Math.max(0, lockTotal - retryAfter) * 1000; lockUntil = now + retryAfter * 1000; lockIdx = -1;
     clearTimeout(typeT); clearTimeout(moodT); clearTimeout(speakT);
-    try { speechSynthesis.cancel(); } catch (e) {}
     $("lockDog").innerHTML = dawgSVG(190, "sleep");
     $("lock").hidden = false; box.style.opacity = "0"; box.style.pointerEvents = "none";
     lockTick(); lockTimer = setInterval(lockTick, 250);
@@ -132,13 +211,15 @@
       '<div class="board"><span class="nail l"></span><span class="nail r"></span><b>BEWARE OF</b><strong>DAWGS</strong><small>(currently asleep. do not wake.)</small></div>' +
       '<div id="lockDog"></div><p class="lockmeta">429 Too Many Requests &middot; Dawg is back in <span id="lockSec">15</span>s</p><p id="lockQuote" class="lockquote"></p>' +
       '<div class="lockbar"><i id="lockFill"></i></div></div></div>' +
-      '<aside id="dawgbox" aria-label="Dawg the mascot"><div id="bubble" role="status" aria-live="polite"><span id="bubbleText"></span></div><div id="dawgFig" title="Click me, or drag me"></div></aside>';
+      '<aside id="dawgbox" aria-label="Dawg the mascot"><div id="bubble" role="status" aria-live="polite"><span id="bubbleText"></span><button type="button" id="dawgSound" aria-label="Dawg sounds" aria-pressed="false"></button></div><div id="dawgFig" title="Click me, or drag me"></div></aside>';
     while (host.firstChild) document.body.appendChild(host.firstChild);
     box = $("dawgbox"); fig = $("dawgFig"); bub = $("bubble"); bt = $("bubbleText");
     fig.innerHTML = dawgSVG(150, "idle");
     document.querySelectorAll("[data-dawg]").forEach(el => { el.innerHTML = dawgSVG(+el.dataset.dawg, el.dataset.mood || "idle"); });
     bt.textContent = "Hi, I'm Dawg! I sniff every payment before it gets charged.";
-    if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.addEventListener && speechSynthesis.addEventListener("voiceschanged", pickVoice); }
+    setSound(soundOn, true);
+    if (soundOn) ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, preload, { once: true, passive: true }));
+    $("dawgSound").addEventListener("click", e => { e.stopPropagation(); setSound(!soundOn); });
     let drag = null;
     fig.addEventListener("pointerdown", e => { drag = { sx: e.clientX, sy: e.clientY, moved: false }; try { fig.setPointerCapture(e.pointerId); } catch (x) {} box.classList.add("dragging"); });
     fig.addEventListener("pointermove", e => {

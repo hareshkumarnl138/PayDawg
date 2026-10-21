@@ -10,6 +10,7 @@ from html import escape
 OUTCOMES = {
     "captured": ("wag", "Wag! All done.", "Dawg sniffed your payment and it smells clean. It has been charged. Thank you!"),
     "held": ("growl", "Grrr... one moment.", "Your payment is authorized and Dawg is holding it for the shop to confirm. Nothing has been charged yet."),
+    "barked": ("bark", "Woof! Dawg says no.", "Dawg barked at this payment and stopped it. Nothing was charged. If you think this is a mistake, please contact the shop."),
     "cancelled": ("idle", "No problem.", "You cancelled at PayPal, so nothing was charged. Dawg understands."),
     "processed": ("idle", "Already handled.", "This payment was already processed. There is nothing more to do here."),
     "notfound": ("bark", "Woof? Can't find that.", "Dawg could not find a payment for this link. Please go back to the shop and try again."),

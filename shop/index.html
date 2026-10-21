@@ -47,8 +47,8 @@
 
       <form id="payForm" class="pay" novalidate hidden>
         <label for="email">Email for the receipt</label>
-        <input id="email" name="email" type="email" autocomplete="email" value="sam@example.com" required>
-        <p class="field-error" id="emailError" hidden>Enter an email address like name@example.com.</p>
+        <input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" inputmode="email" required>
+        <p class="field-error" id="emailError" hidden>An email address is required. Enter one like name@example.com.</p>
         <button type="submit" class="pay-btn" id="payBtn">Pay</button>
         <p class="pay-note" id="payNote">Simulated: there is no PayPal step and no money moves.</p>
       </form>

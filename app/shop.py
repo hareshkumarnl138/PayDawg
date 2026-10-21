@@ -130,7 +130,11 @@ async def checkout(order: Checkout, request: Request):
     status, url = paid.get("status"), paid.get("approval_url")
     # A retried attempt replays the original payment, so check what already happened before redirecting.
     outcome = {"blocked": "declined", "captured": "paid", "held": "held"}.get(status)
-    if outcome is None:
+    if status == "blocked" and url:
+        # BARK_STAGE=after_approval: the buyer still sees PayPal's approve screen. Dawg stops the payment when
+        # PayPal sends them back, and nothing is charged. The shop does not say why this one is different.
+        outcome = "redirect"
+    elif outcome is None:
         outcome = "redirect" if status == "screened" and url else "error"
     result = {**receipt, "outcome": outcome}
     if outcome == "redirect":

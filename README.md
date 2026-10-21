@@ -40,9 +40,11 @@ uvicorn app.main:app --reload
 
 Open http://127.0.0.1:8000 for the dashboard, http://127.0.0.1:8000/shop for the demo pet shop and http://127.0.0.1:8000/docs for API docs.
 
+**When Dawg barks (PayPal mode):** with `BARK_STAGE=after_approval` (the default) a Bark buyer still sees PayPal's approve screen, then Dawg stops the payment when PayPal sends them back ("Woof! Dawg says no."). Dawg creates that PayPal order as authorize-only and never authorizes or captures it, so no money moves and the buyer is not told why. `BARK_STAGE=before_paypal` is the stricter setting: a Bark never reaches PayPal at all. In the shop a Bark is declined with a neutral message; mock mode has no PayPal screen, so it declines straight away.
+
 **SIMULATED buyer approval:** mock mode has no real buyer, so the buyer-approval step is simulated when a payment is created. A **Wag** is captured immediately; a **Growl** is authorized and **held** until the merchant clicks **Capture** or **Void** on the dashboard; a **Bark** is blocked and no order is created.
 
-**Meet Dawg.** The dashboard has a mascot, a German Shepherd who talks (text bubble plus best-effort browser text-to-speech) and changes face for Wag, Growl and Bark. He trots in to speak, can be dragged out of the way, and the Capture/Void buttons glow when a Growl is waiting. In mock mode a **Demo shop** panel on the dashboard sends real requests to the API (normal purchase, buy again, bulk, double-click, card-testing burst, and more) so you can watch the rules work without a script.
+**Meet Dawg.** The dashboard has a mascot, a German Shepherd who changes face and makes a dog noise for each verdict: happy yips for Wag, a growl for Growl, barks for Bark, a whine when he is tired and a snore when he sleeps (synthesized in the browser, no sound files; a speaker button on his speech bubble mutes him, and browsers only allow sound after your first click or key press). A text bubble says what he found. Want real barks instead of the built-in ones? Drop CC0 or your own recordings named `bark`, `growl`, `happy`, `whine` and `snore` (`.ogg`, `.wav`, `.mp3` or `.m4a`) into `dashboard/sounds/` (see the README there); any missing one keeps the built-in sound. He trots in to speak, can be dragged out of the way, and the Capture/Void buttons glow when a Growl is waiting. In mock mode a **Demo shop** panel on the dashboard sends real requests to the API (normal purchase, buy again, bulk, double-click, card-testing burst, and more) so you can watch the rules work without a script.
 
 **Rate limit ("too many tries tire the Dawg").** One client may send `RATE_LIMIT_ATTEMPTS` (12) payment requests per `RATE_LIMIT_WINDOW_SECONDS` (10), and the whole shop `RATE_LIMIT_GLOBAL_ATTEMPTS` (120). The next one gets **HTTP 429** with a `Retry-After` header, and the Dawg falls asleep behind a "Beware of DAWGS" sign for `RATE_LIMIT_LOCK_SECONDS` (15). Responses carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`. `GET /v1/rate-limit` reports the lock, and `POST /v1/demo/reset` (mock mode only) clears demo data. State is in memory per process; set `RATE_LIMIT_ATTEMPTS=0` to disable.
 
@@ -68,7 +70,8 @@ Modelled on how real gateways behave (duplicate-transaction windows, per-card ve
 - **Hard Bark** (the optional AI can neither create nor override these):
   - *Exact duplicate*: same customer, amount and `order_ref` within `DUPLICATE_WINDOW_SECONDS` (default 120). A double-click or replayed request. Send a **new `order_ref`** for a genuine repeat purchase and it is not a duplicate.
   - *Velocity*: one customer making `VELOCITY_LIMIT` (5) or more payments inside `VELOCITY_WINDOW_MINUTES` (10).
-- **Soft signals** add to a 0-100 risk score; 40 or more is a **Growl** (authorize and hold): unusual amount (50), shop-wide surge (40, a card-testing pattern), new customer (20), odd hour (20). A customer with an earlier captured payment gets a 20-point discount.
+- **Soft signals** add to a 0-100 risk score; 40 or more is a **Growl** (authorize and hold): unusual amount (50), large order (50), shop-wide surge (40, a card-testing pattern), new customer (20), odd hour (20). A customer with an earlier captured payment gets a 20-point discount, except on a large order, which is always held.
+- **Review ceiling:** any single payment above `HARD_REVIEW_AMOUNT` (default 500, `0` turns it off) is a Growl even for a brand-new shop that has not learned a normal yet, and a returning-customer discount cannot wave it through.
 - A bulk order is a single payment with a bigger amount: buying 4 x 18 as 72 is not unusual, because the threshold is 5x the shop average (or 2x its largest payment).
 
 **Dawg's Notebook learns each shop's normal**, from captured payments only, so the soft signals fit the shop instead of fixed demo numbers (`app/notebook.py`):
@@ -114,7 +117,7 @@ Everything above runs in mock mode. To drive PayPal's real sandbox:
 ```bash
 python demo_shop/paypal_check.py wag     # small payment -> Wag, you approve it in the browser, it is captured
 python demo_shop/paypal_check.py growl   # big payment from a new customer -> Growl, held; you choose capture or void
-python demo_shop/paypal_check.py bark    # same order twice -> Bark, blocked before PayPal
+python demo_shop/paypal_check.py bark    # same order twice -> Bark, blocked (never authorized or captured)
 ```
 
 The script prints PayPal's approval link. Open it, log in with a **sandbox buyer** account (Testing Tools > Sandbox Accounts), approve, and PayPal sends the buyer back to `PUBLIC_BASE_URL/paypal/return`, which shows Dawg's result page. Use **USD**: sandbox accounts usually cannot take INR.

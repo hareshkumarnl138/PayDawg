@@ -45,7 +45,11 @@ def follow(p):
     print(f"\nDawg says: {p['verdict']}   status: {p['status']}   id: {p['id']}")
     print('Why:', '; '.join(p.get('reasons') or []) or '-')
     if p['status'] == 'blocked':
-        print('Blocked before PayPal: no order was created and no money moved.')
+        if p.get('approval_url'):
+            print('Blocked. A buyer may still see the PayPal approve screen, but Dawg never authorizes or captures it, so no money moves.')
+            print('Try it: open ' + p['approval_url'] + ' with a sandbox buyer, approve, and Dawg says no when PayPal sends you back.')
+        else:
+            print('Blocked before PayPal: no order was created and no money moved.')
         return
     if p.get('approval_url'):
         print('\n1) Open this link in your browser:\n\n   ' + p['approval_url'])
