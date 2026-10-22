@@ -31,3 +31,13 @@ def business_hours_clock(monkeypatch):
     """
     from app.screening import rules
     monkeypatch.setattr(rules, '_now', lambda: datetime.now(timezone(timedelta(hours=12 - datetime.now(timezone.utc).hour))))
+
+
+@pytest.fixture(autouse=True)
+def allow_placeholder_emails():
+    """Most tests use name@example.com. The check itself is tested in test_v9_2 with the setting switched on."""
+    from app import config
+    old = config.settings.block_fake_emails
+    object.__setattr__(config.settings, "block_fake_emails", False)
+    yield
+    object.__setattr__(config.settings, "block_fake_emails", old)

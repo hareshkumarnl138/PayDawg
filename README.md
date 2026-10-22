@@ -91,6 +91,7 @@ Modelled on how real gateways behave (duplicate-transaction windows, per-card ve
   - *Velocity*: one customer making `VELOCITY_LIMIT` (5) or more payments inside `VELOCITY_WINDOW_MINUTES` (10).
 - **Soft signals** add to a 0-100 risk score; 40 or more is a **Growl** (authorize and hold): unusual amount (50), large order (50), shop-wide surge (40, a card-testing pattern), new customer (20), odd hour (20). A customer with an earlier captured payment gets a 20-point discount, except on a large order, which is always held.
 - **Review ceiling:** any single payment above `HARD_REVIEW_AMOUNT` (default 500, `0` turns it off) is a Growl even for a brand-new shop that has not learned a normal yet, and a returning-customer discount cannot wave it through.
+- **Fake emails:** the demo shop refuses placeholder addresses (`example.com`, `.test` and similar) and well-known throwaway-mail sites (`BLOCK_FAKE_EMAILS`, on by default; `false` allows any address). It checks the address's shape and domain only; it cannot prove the mailbox exists.
 - A bulk order is a single payment with a bigger amount: buying 4 x 18 as 72 is not unusual, because the threshold is 5x the shop average (or 2x its largest payment).
 - An *idempotency key* is different from `order_ref`: the same key returns the original result (safe retries); a new `order_ref` is a new purchase.
 - With the optional AI on, the hard rules run once more just before a payment is stored, so a double-click or a burst sent while the AI was still thinking is still caught.

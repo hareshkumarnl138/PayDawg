@@ -212,6 +212,16 @@ def test_dog_sounds_lists_only_the_recordings_that_exist(client, tmp_path, monke
     assert client.get("/dog-sounds").json() == {"bark": "bark.wav", "growl": "growl.ogg"}
 
 
-def test_dog_sounds_is_empty_when_the_folder_has_no_recordings(client):
+def test_dog_sounds_is_empty_when_the_folder_has_no_recordings(client, tmp_path, monkeypatch):
+    import app.main as m
+    (tmp_path / "sounds").mkdir()
+    monkeypatch.setattr(m, "DASHBOARD", tmp_path)
     assert client.get("/dog-sounds").json() == {}
+
+
+def test_every_listed_recording_is_actually_served(client):
+    """Works with or without real recordings in dashboard/sounds/: whatever the list names must download."""
     assert client.get("/dashboard/sounds/README.txt").status_code == 200
+    for mood, name in client.get("/dog-sounds").json().items():
+        assert mood in {"bark", "growl", "wag"}
+        assert client.get(f"/dashboard/sounds/{name}").status_code == 200

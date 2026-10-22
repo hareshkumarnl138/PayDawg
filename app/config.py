@@ -67,6 +67,8 @@ class Settings:
     merchant_surge_limit: int = _int("MERCHANT_SURGE_LIMIT", "15")
     # Any single payment above this is held for the shop to review (Growl), even for a brand-new shop. 0 disables.
     hard_review_amount: float = _float("HARD_REVIEW_AMOUNT", "500")
+    # Demo shop only: refuse placeholder and throwaway email addresses (example.com, test domains, temporary-mail sites).
+    block_fake_emails: bool = _bool("BLOCK_FAKE_EMAILS", True)
     # PayPal mode only. after_approval: a Bark buyer still sees PayPal's approve screen, then Dawg stops the payment
     # (no authorization or capture is ever made, so no money moves). before_paypal: Bark never reaches PayPal.
     bark_stage: str = os.getenv("BARK_STAGE", "after_approval").strip().lower().replace("-", "_")

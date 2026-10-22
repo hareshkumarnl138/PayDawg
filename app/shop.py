@@ -64,6 +64,28 @@ class Checkout(BaseModel):
         return value
 
 
+# Placeholder domains (reserved for examples and tests) and well-known throwaway-mail sites. This keeps typed-in
+# nonsense out; it cannot prove an address exists (only sending a confirmation email can).
+FAKE_DOMAINS = {
+    "example.com", "example.org", "example.net", "test.com", "domain.com", "yourdomain.com", "sample.com", "fake.com",
+    "mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com", "temp-mail.org", "yopmail.com",
+    "trashmail.com", "sharklasers.com", "getnada.com", "dispostable.com", "throwawaymail.com",
+}
+FAKE_TLDS = {"test", "example", "invalid", "localhost", "local"}
+FAKE_EMAIL_MESSAGE = "Please use a real email address. Placeholder addresses like name@example.com and temporary-mail sites are not accepted."
+
+
+def fake_email_reason(email: str) -> str | None:
+    """A message when the address is a placeholder or throwaway one (and the check is on), else None."""
+    if not settings.block_fake_emails:
+        return None
+    domain = email.rsplit("@", 1)[-1].strip().lower().rstrip(".")
+    labels = domain.split(".")
+    if labels[-1] in FAKE_TLDS or any(".".join(labels[i:]) in FAKE_DOMAINS for i in range(len(labels))):
+        return FAKE_EMAIL_MESSAGE
+    return None
+
+
 def customer_number(email: str) -> str:
     """The same email always gives the same customer number, so Dawg recognises a returning buyer."""
     return "shopper-" + hashlib.sha256(email.encode()).hexdigest()[:10]
@@ -101,6 +123,9 @@ def catalog():
 
 @router.post("/api/checkout")
 async def checkout(order: Checkout, request: Request):
+    problem = fake_email_reason(order.email)
+    if problem:
+        raise HTTPException(422, problem)
     lines, total = price(order.items)
     # The order number comes from a hash of the whole attempt: stable when the same checkout is retried,
     # and two different attempts cannot share one (which would look like a double-click to the rules).
