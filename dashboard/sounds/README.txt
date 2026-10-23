@@ -22,4 +22,4 @@ bark.wav  - six barks cut from "dog sounds" by pauliuw, joined with short gaps.
 happy.wav - three whines cut from the same pack, reordered and pitched up slightly.
             https://opengameart.org/content/dog-sounds  (CC0 1.0, public domain)
 
-growl.mp3 - SOURCE AND LICENCE: fill in before publishing (author, link, licence).
+growl.mp3 - [AUTHOR] - [LINK]  ([LICENCE])
