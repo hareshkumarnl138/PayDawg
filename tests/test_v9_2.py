@@ -34,3 +34,10 @@ def test_the_check_can_be_switched_off(client):
 
 def test_the_setting_defaults_to_on():
     assert config._bool("SOME_UNSET_SETTING_FOR_TEST", True) is True
+
+
+def test_only_the_three_verdict_pages_ask_for_a_noise():
+    from app.pages import OUTCOMES, result_page
+    for outcome in OUTCOMES:
+        has = 'data-sound="arrive"' in result_page(outcome)
+        assert has == (outcome in ("captured", "held", "barked")), outcome

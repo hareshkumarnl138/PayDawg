@@ -101,18 +101,21 @@
      dashboard/sounds/. Anything missing keeps its synthesized sound, so the folder can start empty. */
   const MAX_SECONDS = { bark: 2.4, growl: 2.2, wag: 1.8 };
   const recordings = {};            // mood -> AudioBuffer (a mood with no recording is simply absent)
-  let preloading = false;
-  async function preload(){
-    if (preloading) return; preloading = true;
-    const a = audio(); if (!a || !window.fetch || location.protocol === "file:") return;   // a saved copy of a page has no server to ask
-    let found = {};
-    try { const r = await fetch("/dog-sounds"); if (r.ok) found = await r.json(); } catch (e) { return; }
-    Object.keys(found).forEach(async mood => {
-      try {
-        const r = await fetch("/dashboard/sounds/" + encodeURIComponent(found[mood]));
-        if (r.ok) recordings[mood] = await a.decodeAudioData(await r.arrayBuffer());
-      } catch (e) { /* not usable audio: keep the built-in sound */ }
-    });
+  let preloadP = null;              // one shared load, so a page can wait for the recordings before it plays one
+  function preload(){
+    if (preloadP) return preloadP;
+    preloadP = (async () => {
+      const a = audio(); if (!a || !window.fetch || location.protocol === "file:") return;   // a saved copy of a page has no server to ask
+      let found = {};
+      try { const r = await fetch("/dog-sounds"); if (r.ok) found = await r.json(); } catch (e) { return; }
+      await Promise.all(Object.keys(found).map(async mood => {
+        try {
+          const r = await fetch("/dashboard/sounds/" + encodeURIComponent(found[mood]));
+          if (r.ok) recordings[mood] = await a.decodeAudioData(await r.arrayBuffer());
+        } catch (e) { /* not usable audio: keep the built-in sound */ }
+      }));
+    })();
+    return preloadP;
   }
   function playRecording(a, mood, t){
     const buf = recordings[mood]; if (!buf) return false;
@@ -126,7 +129,30 @@
     preload();
     const t = a.currentTime + 0.03;
     // A mood with no sound (idle, after a void) stays quiet; it used to fall back to the happy yips.
-    try { if (!playRecording(a, mood, t) && SOUNDS[mood]) SOUNDS[mood](a, t); } catch (e) {}
+    try {
+      if (playRecording(a, mood, t)) lastSound = mood;
+      else if (SOUNDS[mood]) { SOUNDS[mood](a, t); lastSound = mood; }
+    } catch (e) {}
+  }
+  let lastSound = "";                // the mood of the last noise started (the page tests read it)
+  /* The buyer pages ("Wag! All done.", "Grrr... one moment.", "Woof! Dawg says no.") make Dawg's noise when they open.
+     A browser may refuse sound on a page nobody has touched yet; then a small button asks for one tap. */
+  function arrive(mood){
+    if (!soundOn || !window.fetch) return;
+    const a = audio(); if (!a) return;
+    preload().then(() => setTimeout(() => {
+      if (a.state === "running") { speak("", mood); return; }
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "dawg-tap"; b.textContent = "\u{1F50A} Tap to hear Dawg";
+      let done = false;
+      const events = ["click", "pointerup", "keydown"];
+      const go = () => a.resume().then(() => {
+        if (done || a.state !== "running") return;
+        done = true; b.remove(); events.forEach(ev => document.removeEventListener(ev, go)); speak("", mood);
+      }, () => {});
+      events.forEach(ev => document.addEventListener(ev, go));
+      document.body.appendChild(b);
+    }, 350));
   }
   function setSound(on, quiet){
     soundOn = on;
@@ -172,6 +198,7 @@
 
   function build(){
     document.querySelectorAll("[data-dawg]").forEach(el => { el.innerHTML = dawgSVG(+el.dataset.dawg, el.dataset.mood || "idle"); });
+    const hero = document.querySelector('[data-sound="arrive"]'); if (hero) arrive(hero.dataset.mood || "idle");
     if (!document.body.hasAttribute("data-mascot")) return;   // the shop and the buyer pages only want the drawings
     const host = document.createElement("div");
     host.innerHTML =
@@ -204,7 +231,7 @@
     recordings[mood] = await a.decodeAudioData(data.slice(0));
     return recordings[mood].duration;
   }
-  window.Dawg = { say, react, loadRecording,
+  window.Dawg = { say, react, loadRecording, lastSound: () => lastSound,
                   clearRecording: mood => { delete recordings[mood]; }, hasRecording: mood => !!recordings[mood] };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
 })();

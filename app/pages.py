@@ -37,6 +37,8 @@ _CSS = (
 
 def result_page(outcome: str, payment: dict | None = None, back_url: str | None = None) -> str:
     mood, headline, message = OUTCOMES.get(outcome, OUTCOMES["error"])
+    # Dawg's noise plays when the buyer lands here, but only for the three verdict pages.
+    sound = ' data-sound="arrive"' if outcome in ("captured", "held", "barked") else ""
     ref = ""
     if payment:
         amount = payment.get("amount")
@@ -52,7 +54,7 @@ def result_page(outcome: str, payment: dict | None = None, back_url: str | None 
         f'<link rel="icon" href="{PAW_ICON}">'
         f"<style>{_CSS}</style></head><body>"
         '<main class="card"><div class="brand">PayDawg</div>'
-        f'<div data-dawg="190" data-mood="{escape(mood)}" aria-hidden="false"></div>'
+        f'<div data-dawg="190" data-mood="{escape(mood)}"{sound} aria-hidden="false"></div>'
         f"<h1>{escape(headline)}</h1><p>{escape(message)}</p>{ref}"
         + (f'<a class="back" href="{escape(back_url)}">Back to the shop</a>' if back_url else "")
         + "</main>"
