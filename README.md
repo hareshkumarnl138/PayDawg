@@ -1,5 +1,7 @@
 # PayDawg
 
+**Live demo:** https://paydawg.onrender.com (PayPal Sandbox, test money only; Render's free plan sleeps when idle, so the first visit can take up to a minute) · **Demo video:** https://youtu.be/INoxDFc8z4M
+
 PayDawg is a payment gateway that thinks before it charges. It sits between a shop and PayPal and gives every payment a verdict before any money moves: **Wag** (charge it), **Growl** (authorize and hold it until the merchant captures or voids it) or **Bark** (block it, nothing is charged). It is a hackathon MVP running on the PayPal Sandbox, not a production fraud system.
 
 ## How PayDawg uses PayPal and AI
@@ -35,7 +37,7 @@ PayDawg is a payment gateway that thinks before it charges. It sits between a sh
 Python 3.11+.
 
 ```bash
-git clone https://github.com/hk8387121-cpu/PayDawg.git
+git clone https://github.com/hareshkumarnl138/PayDawg.git
 cd PayDawg
 python -m venv .venv
 # Windows PowerShell:
